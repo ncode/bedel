@@ -16,8 +16,8 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
 	"github.com/ncode/bedel/pkg/redis"
-
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +32,13 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		redis.Run()
+		nodes, err := redis.FindNodes("localhost:6379", "", "")
+		if err != nil {
+			panic(err)
+		}
+		for _, node := range nodes {
+			fmt.Printf("Node: %q\n", node)
+		}
 	},
 }
 

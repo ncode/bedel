@@ -3,7 +3,6 @@ package redis
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -11,67 +10,68 @@ import (
 )
 
 type NodeInfo struct {
-	IPAddress string
-	Port      string
-	Function  string
+	Host     string
+	Port     string
+	Function string
 }
 
-func getRedisInfo(client *redis.Client, section string) string {
-	res, err := client.Info(context.Background(), section).Result()
+func getRedisInfo(client *redis.Client, section string) (response string, err error) {
+	response, err = client.Info(context.Background(), section).Result()
 	if err != nil {
-		fmt.Println("Error fetching info from Redis:", err)
-		return ""
+		return "", err
 	}
-	return res
+	return response, err
 }
 
-func parseRedisOutput(output string) []NodeInfo {
-	var nodes []NodeInfo
-
+func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
 	slaveRegex := regexp.MustCompile(`slave\d+:ip=(?P<ip>\d+\.\d+\.\d+\.\d+),port=(?P<port>\d+)`)
 	masterHostRegex := regexp.MustCompile(`master_host:(?P<host>[a-zA-Z0-9\.-_]+)`)
 	masterPortRegex := regexp.MustCompile(`master_port:(?P<port>\d+)`)
+
+	var masterHost, masterPort string
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		if strings.HasPrefix(line, "role:") {
-			role := strings.TrimPrefix(line, "role:")
-			if role == "slave" {
-				hostMatch := masterHostRegex.FindStringSubmatch(line)
-				portMatch := masterPortRegex.FindStringSubmatch(line)
+		if matches := masterHostRegex.FindStringSubmatch(line); matches != nil {
+			masterHost = matches[1]
+		}
 
-				if hostMatch != nil && portMatch != nil {
-					ip := hostMatch[1]
-					port := portMatch[1]
-					nodes = append(nodes, NodeInfo{IPAddress: ip, Port: port, Function: "master"})
-				}
-			}
+		if matches := masterPortRegex.FindStringSubmatch(line); matches != nil {
+			masterPort = matches[1]
+			nodes = append(nodes, NodeInfo{Host: masterHost, Port: masterPort, Function: "master"})
 		}
 
 		if matches := slaveRegex.FindStringSubmatch(line); matches != nil {
 			ip := matches[slaveRegex.SubexpIndex("ip")]
 			port := matches[slaveRegex.SubexpIndex("port")]
-			nodes = append(nodes, NodeInfo{IPAddress: ip, Port: port, Function: "slave"})
+			nodes = append(nodes, NodeInfo{Host: ip, Port: port, Function: "slave"})
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Println("Error reading output:", err)
+		return nodes, err
 	}
 
-	return nodes
+	return nodes, err
 }
 
-func Run() {
+func FindNodes(addr string, username string, password string) (nodes []NodeInfo, err error) {
 	rdb := redis.NewClient(&redis.Options{
-		Addr: "localhost:6380", // change this to your Redis address
+		Addr:     addr,
+		Username: username,
+		Password: password,
 	})
 
-	replicationInfo := getRedisInfo(rdb, "replication")
-	nodes := parseRedisOutput(replicationInfo)
-	for _, node := range nodes {
-		fmt.Println(node)
+	replicationInfo, err := getRedisInfo(rdb, "replication")
+	if err != nil {
+		return nodes, err
 	}
+	nodes, err = parseRedisOutput(replicationInfo)
+	if err != nil {
+		return nodes, err
+	}
+
+	return nodes, err
 }
