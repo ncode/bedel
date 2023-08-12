@@ -17,7 +17,7 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/ncode/bedel/pkg/redis"
+	"github.com/ncode/bedel/pkg/aclmanager"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +32,8 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		nodes, err := redis.FindNodes("localhost:6379", "", "")
+		aclManager := aclmanager.New("localhost:6379", "", "")
+		nodes, err := aclManager.FindNodes()
 		if err != nil {
 			panic(err)
 		}

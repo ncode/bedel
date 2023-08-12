@@ -1,4 +1,4 @@
-package redis
+package aclmanager
 
 import (
 	"bufio"
@@ -8,6 +8,29 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+// AclManager containers the struct for bedel to manager the state of aclmanager acls
+type AclManager struct {
+	Addr        string
+	Username    string
+	Password    string
+	RedisClient *redis.Client
+}
+
+// New creates a new AclManager
+func New(addr string, username string, password string) *AclManager {
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Username: username,
+		Password: password,
+	})
+	return &AclManager{
+		Addr:        addr,
+		Username:    username,
+		Password:    password,
+		RedisClient: redisClient,
+	}
+}
 
 type NodeInfo struct {
 	Host     string
@@ -57,15 +80,8 @@ func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
 	return nodes, err
 }
 
-func FindNodes(addr string, username string, password string) (nodes []NodeInfo, err error) {
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Username: username,
-		Password: password,
-	})
-	defer rdb.Close()
-
-	replicationInfo, err := getRedisInfo(rdb, "replication")
+func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
+	replicationInfo, err := getRedisInfo(a.RedisClient, "replication")
 	if err != nil {
 		return nodes, err
 	}
@@ -75,4 +91,8 @@ func FindNodes(addr string, username string, password string) (nodes []NodeInfo,
 	}
 
 	return nodes, err
+}
+
+func (a *AclManager) Close() error {
+	return a.RedisClient.Close()
 }

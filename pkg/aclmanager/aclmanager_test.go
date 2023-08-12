@@ -1,4 +1,4 @@
-package redis
+package aclmanager
 
 import (
 	"testing"
@@ -26,7 +26,7 @@ repl_backlog_histlen:322`
 	slaveOutput := `
 # Replication
 role:slave
-master_host:redis-master
+master_host:aclmanager-master
 master_port:6379
 master_link_status:up
 master_last_io_seconds_ago:10
@@ -67,7 +67,7 @@ repl_backlog_histlen:434`
 			mockResp: slaveOutput,
 			want: []NodeInfo{
 				{
-					Host:     "redis-master",
+					Host:     "aclmanager-master",
 					Port:     "6379",
 					Function: "master",
 				},
@@ -78,13 +78,13 @@ repl_backlog_histlen:434`
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rdb, mock := redismock.NewClientMock()
+			redisClient, mock := redismock.NewClientMock()
 
 			// Mocking the response for the Info function
 			mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			aclManager := AclManager{RedisClient: redisClient}
 
-			replicationInfo, _ := getRedisInfo(rdb, "replication")
-			nodes, err := parseRedisOutput(replicationInfo)
+			nodes, err := aclManager.FindNodes()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
 				return
