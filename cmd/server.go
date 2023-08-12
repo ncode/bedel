@@ -40,6 +40,13 @@ to quickly create a Cobra application.`,
 		for _, node := range nodes {
 			fmt.Printf("Node: %q\n", node)
 		}
+		acls, err := aclManager.ListAcls()
+		if err != nil {
+			panic(err)
+		}
+		for _, acl := range acls {
+			fmt.Printf("acls: %q\n", acl)
+		}
 	},
 }
 

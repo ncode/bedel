@@ -3,6 +3,7 @@ package aclmanager
 import (
 	"bufio"
 	"context"
+	"log"
 	"regexp"
 	"strings"
 
@@ -36,14 +37,6 @@ type NodeInfo struct {
 	Host     string
 	Port     string
 	Function string
-}
-
-func getRedisInfo(client *redis.Client, section string) (response string, err error) {
-	response, err = client.Info(context.Background(), section).Result()
-	if err != nil {
-		return "", err
-	}
-	return response, err
 }
 
 func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
@@ -80,11 +73,13 @@ func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
 	return nodes, err
 }
 
+// FindNodes returns a list of nodes in the cluster based on the redis info replication command
 func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
-	replicationInfo, err := getRedisInfo(a.RedisClient, "replication")
+	replicationInfo, err := a.RedisClient.Info(context.Background(), "replication").Result()
 	if err != nil {
 		return nodes, err
 	}
+
 	nodes, err = parseRedisOutput(replicationInfo)
 	if err != nil {
 		return nodes, err
@@ -93,6 +88,26 @@ func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
 	return nodes, err
 }
 
+// ListAcls returns a list of acls in the cluster based on the redis acl list command
+func (a *AclManager) ListAcls() (acls []string, err error) {
+	result, err := a.RedisClient.Do(context.Background(), "ACL", "LIST").Result()
+	if err != nil {
+		return acls, err
+	}
+
+	aclList, ok := result.([]interface{})
+	if !ok {
+		log.Fatal("Error: Unexpected result format.")
+	}
+
+	for _, acl := range aclList {
+		acls = append(acls, acl.(string))
+	}
+
+	return acls, err
+}
+
+// Close closes the redis client
 func (a *AclManager) Close() error {
 	return a.RedisClient.Close()
 }
