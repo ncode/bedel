@@ -24,8 +24,8 @@ func getRedisInfo(client *redis.Client, section string) (response string, err er
 }
 
 func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
-	slaveRegex := regexp.MustCompile(`slave\d+:ip=(?P<ip>\d+\.\d+\.\d+\.\d+),port=(?P<port>\d+)`)
-	masterHostRegex := regexp.MustCompile(`master_host:(?P<host>[a-zA-Z0-9\.-_]+)`)
+	slaveRegex := regexp.MustCompile(`slave\d+:ip=(?P<ip>.+),port=(?P<port>\d+)`)
+	masterHostRegex := regexp.MustCompile(`master_host:(?P<host>.+)`)
 	masterPortRegex := regexp.MustCompile(`master_port:(?P<port>\d+)`)
 
 	var masterHost, masterPort string
@@ -63,6 +63,7 @@ func FindNodes(addr string, username string, password string) (nodes []NodeInfo,
 		Username: username,
 		Password: password,
 	})
+	defer rdb.Close()
 
 	replicationInfo, err := getRedisInfo(rdb, "replication")
 	if err != nil {
