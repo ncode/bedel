@@ -7,16 +7,14 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - ./master/redis.conf:/usr/local/etc/redis/redis.conf
-      - ./master/users.acl:/usr/local/etc/redis/users.acl
+      - ./master:/usr/local/etc/redis:rw
     command: redis-server /usr/local/etc/redis/redis.conf
 
   redis-slave1:
     image: redis:latest
     container_name: redis-slave1
     volumes:
-      - ./slave01/redis.conf:/usr/local/etc/redis/redis.conf
-      - ./slave01/users.acl:/usr/local/etc/redis/users.acl
+      - ./slave01:/usr/local/etc/redis:rw
     command: 
       - "redis-server"
       - "/usr/local/etc/redis/redis.conf"
@@ -29,8 +27,7 @@ services:
     image: redis:latest
     container_name: redis-slave2
     volumes:
-      - ./slave02/redis.conf:/usr/local/etc/redis/redis.conf
-      - ./slave02/users.acl:/usr/local/etc/redis/users.acl
+      - ./slave02:/usr/local/etc/redis:rw
     command:
       - "redis-server"
       - "/usr/local/etc/redis/redis.conf"
