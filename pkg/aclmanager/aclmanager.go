@@ -3,6 +3,7 @@ package aclmanager
 import (
 	"bufio"
 	"context"
+	"github.com/fsnotify/fsnotify"
 	"log"
 	"regexp"
 	"strings"
@@ -15,11 +16,12 @@ type AclManager struct {
 	Addr        string
 	Username    string
 	Password    string
+	AclFile     string
 	RedisClient *redis.Client
 }
 
 // New creates a new AclManager
-func New(addr string, username string, password string) *AclManager {
+func New(addr string, username string, password string, aclFile string) *AclManager {
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Username: username,
@@ -29,6 +31,7 @@ func New(addr string, username string, password string) *AclManager {
 		Addr:        addr,
 		Username:    username,
 		Password:    password,
+		AclFile:     aclFile,
 		RedisClient: redisClient,
 	}
 }
@@ -105,6 +108,49 @@ func (a *AclManager) ListAcls() (acls []string, err error) {
 	}
 
 	return acls, err
+}
+
+// WatchAclFile watches the acl file for changes and updates the cluster
+func (a *AclManager) WatchAclFile() error {
+	// Create new watcher.
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer watcher.Close()
+
+	// Start listening for events.
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Has(fsnotify.Create) {
+					if strings.Contains(event.Name, "users.acl") {
+						log.Println("ACL file created:", event.Name)
+					}
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Println("error:", err)
+			}
+		}
+	}()
+
+	// Add a path.
+	err = watcher.Add(a.AclFile)
+	if err != nil {
+		return err
+	}
+
+	// Block main goroutine forever.
+	<-make(chan struct{})
+
+	return err
 }
 
 // Close closes the redis client
