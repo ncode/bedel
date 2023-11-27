@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/redis/go-redis/v9"
+	"github.com/spf13/viper"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // AclManager containers the struct for bedel to manager the state of aclmanager acls
@@ -97,9 +99,6 @@ func (a *AclManager) SyncAcls() (err error) {
 		if node.Function == "master" {
 			if a.Addr == node.Address {
 				return err
-			}
-			if err != nil {
-				return fmt.Errorf("error listing master acls: %v", err)
 			}
 			master := redis.NewClient(&redis.Options{
 				Addr:     node.Address,
@@ -192,4 +191,22 @@ func mirrorAcls(source *redis.Client, destination *redis.Client) (deleted []stri
 	}
 
 	return deleted, nil
+}
+
+// Loop loops through the sync interval and syncs the acls
+func (a *AclManager) Loop(ctx context.Context) (err error) {
+	ticker := time.NewTicker(viper.GetDuration("syncInterval") * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return err
+		case <-ticker.C:
+			err = a.SyncAcls()
+			if err != nil {
+				return fmt.Errorf("error syncing acls: %v", err)
+			}
+		}
+	}
 }

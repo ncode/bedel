@@ -28,7 +28,7 @@ repl_backlog_histlen:322`
 	slaveOutput := `
 # Replication
 role:slave
-master_host:aclmanager-master
+master_host:172.21.0.2
 master_port:6379
 master_link_status:up
 master_last_io_seconds_ago:10
@@ -68,7 +68,7 @@ repl_backlog_histlen:434`
 			mockResp: slaveOutput,
 			want: []NodeInfo{
 				{
-					Address:  "aclmanager-master:6379",
+					Address:  "172.21.0.2:6379",
 					Function: "master",
 				},
 			},
