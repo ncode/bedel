@@ -142,9 +142,7 @@ func TestListAcls(t *testing.T) {
 				"user default on nopass ~* &* +@all",
 				123, // Invalid element
 			},
-			want: []string{
-				"user default on nopass ~* &* +@all",
-			},
+			want:    nil,
 			wantErr: true,
 		},
 	}
