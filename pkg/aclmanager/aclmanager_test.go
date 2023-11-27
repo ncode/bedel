@@ -1,6 +1,7 @@
 package aclmanager
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"testing"
@@ -9,9 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestFindNodes(t *testing.T) {
-	// Sample master and slave output for testing
-	masterOutput := `
+var (
+	masterOutput = `
 # Replication
 role:master
 connected_slaves:1
@@ -25,7 +25,7 @@ repl_backlog_size:1048576
 repl_backlog_first_byte_offset:1
 repl_backlog_histlen:322`
 
-	slaveOutput := `
+	slaveOutput = `
 # Replication
 role:slave
 master_host:172.21.0.2
@@ -45,6 +45,10 @@ repl_backlog_active:1
 repl_backlog_size:1048576
 repl_backlog_first_byte_offset:1
 repl_backlog_histlen:434`
+)
+
+func TestFindNodes(t *testing.T) {
+	// Sample master and slave output for testing
 
 	tests := []struct {
 		name     string
@@ -138,9 +142,7 @@ func TestListAcls(t *testing.T) {
 				"user default on nopass ~* &* +@all",
 				123, // Invalid element
 			},
-			want: []string{
-				"user default on nopass ~* &* +@all",
-			},
+			want:    nil,
 			wantErr: true,
 		},
 	}
@@ -151,7 +153,7 @@ func TestListAcls(t *testing.T) {
 
 			// Mocking the response for the ACL LIST command
 			mock.ExpectDo("ACL", "LIST").SetVal(tt.mockResp)
-			acls, err := listAcls(redisClient)
+			acls, err := listAcls(context.Background(), redisClient)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("listAcls() error = %v, wantErr %v", err, tt.wantErr)
@@ -223,7 +225,7 @@ func TestMirrorAcls(t *testing.T) {
 				}
 			}
 
-			deleted, err := mirrorAcls(sourceClient, destinationClient)
+			deleted, err := mirrorAcls(context.Background(), sourceClient, destinationClient)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -231,5 +233,23 @@ func TestMirrorAcls(t *testing.T) {
 				t.Errorf("mirrorAcls() deleted = %v, expectedDeleted %v", deleted, tt.expectedDeleted)
 			}
 		})
+	}
+}
+
+func BenchmarkParseRedisOutputSlave(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, err := parseRedisOutput(slaveOutput)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkParseRedisOutputMaster(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, err := parseRedisOutput(masterOutput)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
