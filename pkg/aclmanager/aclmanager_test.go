@@ -163,7 +163,7 @@ func TestListAcls(t *testing.T) {
 	}
 }
 
-func TestSyncAcls(t *testing.T) {
+func TestMirrorAcls(t *testing.T) {
 	tests := []struct {
 		name            string
 		sourceAcls      []interface{}
@@ -223,12 +223,12 @@ func TestSyncAcls(t *testing.T) {
 				}
 			}
 
-			deleted, err := syncAcls(sourceClient, destinationClient)
+			deleted, err := mirrorAcls(sourceClient, destinationClient)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("syncAcls() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !reflect.DeepEqual(deleted, tt.expectedDeleted) {
-				t.Errorf("syncAcls() deleted = %v, expectedDeleted %v", deleted, tt.expectedDeleted)
+				t.Errorf("mirrorAcls() deleted = %v, expectedDeleted %v", deleted, tt.expectedDeleted)
 			}
 		})
 	}

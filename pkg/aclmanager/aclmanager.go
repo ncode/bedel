@@ -108,7 +108,7 @@ func (a *AclManager) SyncAcls() (err error) {
 			})
 			defer master.Close()
 
-			_, err := syncAcls(master, a.RedisClient)
+			_, err := mirrorAcls(master, a.RedisClient)
 			if err != nil {
 				return fmt.Errorf("error syncing acls: %v", err)
 			}
@@ -152,8 +152,8 @@ func listAcls(client *redis.Client) (acls []string, err error) {
 	return acls, err
 }
 
-// syncAcls returns a list of acls in the cluster based on the redis acl list command
-func syncAcls(source *redis.Client, destination *redis.Client) (deleted []string, err error) {
+// mirrorAcls returns a list of acls in the cluster based on the redis acl list command
+func mirrorAcls(source *redis.Client, destination *redis.Client) (deleted []string, err error) {
 	sourceAcls, err := listAcls(source)
 	if err != nil {
 		return nil, fmt.Errorf("error listing source acls: %v", err)
