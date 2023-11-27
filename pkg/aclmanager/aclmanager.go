@@ -156,7 +156,7 @@ func listAcls(client *redis.Client) (acls []string, err error) {
 func syncAcls(source *redis.Client, destination *redis.Client) (deleted []string, err error) {
 	sourceAcls, err := listAcls(source)
 	if err != nil {
-		return nil, fmt.Errorf("error listing master acls: %v", err)
+		return nil, fmt.Errorf("error listing source acls: %v", err)
 	}
 
 	destinationAcls, err := listAcls(destination)
