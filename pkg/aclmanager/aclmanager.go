@@ -11,6 +11,12 @@ import (
 	"time"
 )
 
+var (
+	slaveRegex      = regexp.MustCompile(`slave\d+:ip=(?P<ip>.+),port=(?P<port>\d+)`)
+	masterHostRegex = regexp.MustCompile(`master_host:(?P<host>.+)`)
+	masterPortRegex = regexp.MustCompile(`master_port:(?P<port>\d+)`)
+)
+
 // AclManager containers the struct for bedel to manager the state of aclmanager acls
 type AclManager struct {
 	Addr        string
@@ -40,10 +46,6 @@ type NodeInfo struct {
 }
 
 func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
-	slaveRegex := regexp.MustCompile(`slave\d+:ip=(?P<ip>.+),port=(?P<port>\d+)`)
-	masterHostRegex := regexp.MustCompile(`master_host:(?P<host>.+)`)
-	masterPortRegex := regexp.MustCompile(`master_port:(?P<port>\d+)`)
-
 	var masterHost, masterPort string
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -95,6 +97,7 @@ func (a *AclManager) SyncAcls() (err error) {
 		return err
 	}
 
+	ctx := context.Background()
 	for _, node := range nodes {
 		if node.Function == "master" {
 			if a.Addr == node.Address {
@@ -107,7 +110,7 @@ func (a *AclManager) SyncAcls() (err error) {
 			})
 			defer master.Close()
 
-			_, err := mirrorAcls(master, a.RedisClient)
+			_, err := mirrorAcls(ctx, master, a.RedisClient)
 			if err != nil {
 				return fmt.Errorf("error syncing acls: %v", err)
 			}
@@ -123,42 +126,41 @@ func (a *AclManager) Close() error {
 }
 
 // listAcls returns a list of acls in the cluster based on the redis acl list command
-func listAcls(client *redis.Client) (acls []string, err error) {
-	result, err := client.Do(context.Background(), "ACL", "LIST").Result()
+func listAcls(ctx context.Context, client *redis.Client) (acls []string, err error) {
+	result, err := client.Do(ctx, "ACL", "LIST").Result()
 	if err != nil {
-		return acls, err
+		return nil, err
 	}
 
 	aclList, ok := result.([]interface{})
 	if !ok {
-		return acls, fmt.Errorf("expected type result format: %v", result)
+		return nil, fmt.Errorf("unexpected result format: %v", result)
 	}
 
-	length := len(aclList)
-	if length == 0 {
-		return acls, err
+	if len(aclList) == 0 {
+		return nil, nil // Return nil if no ACLs are found
 	}
 
-	for _, acl := range aclList {
-		value, ok := acl.(string)
+	acls = make([]string, len(aclList))
+	for i, acl := range aclList {
+		aclStr, ok := acl.(string)
 		if !ok {
-			return acls, fmt.Errorf("expected type string: %v", acl)
+			return nil, fmt.Errorf("unexpected type for ACL: %v", acl)
 		}
-
-		acls = append(acls, value)
+		acls[i] = aclStr
 	}
 
-	return acls, err
+	return acls, nil
 }
 
 // mirrorAcls returns a list of acls in the cluster based on the redis acl list command
-func mirrorAcls(source *redis.Client, destination *redis.Client) (deleted []string, err error) {
-	sourceAcls, err := listAcls(source)
+func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Client) (deleted []string, err error) {
+	sourceAcls, err := listAcls(ctx, source)
 	if err != nil {
 		return nil, fmt.Errorf("error listing source acls: %v", err)
 	}
 
-	destinationAcls, err := listAcls(destination)
+	destinationAcls, err := listAcls(ctx, destination)
 	if err != nil {
 		return nil, fmt.Errorf("error listing current acls: %v", err)
 	}
