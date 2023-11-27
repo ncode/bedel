@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/redis/go-redis/v9"
 	"regexp"
-	"slices"
 	"strings"
 )
 
@@ -155,35 +154,42 @@ func listAcls(client *redis.Client) (acls []string, err error) {
 
 // syncAcls returns a list of acls in the cluster based on the redis acl list command
 func syncAcls(source *redis.Client, destination *redis.Client) (deleted []string, err error) {
-	aclsToSync, err := listAcls(source)
+	sourceAcls, err := listAcls(source)
 	if err != nil {
-		return deleted, fmt.Errorf("error listing master acls: %v", err)
+		return nil, fmt.Errorf("error listing master acls: %v", err)
 	}
 
-	currentAcls, err := listAcls(destination)
+	destinationAcls, err := listAcls(destination)
 	if err != nil {
-		return deleted, fmt.Errorf("error listing current acls: %v", err)
+		return nil, fmt.Errorf("error listing current acls: %v", err)
 	}
 
-	for _, acl := range currentAcls {
-		acl := acl
-		if pos := slices.Index(aclsToSync, acl); pos != -1 {
-			aclsToSync = slices.Delete(aclsToSync, pos, pos+1)
-			continue
-		}
-		err = destination.Do(context.Background(), "ACL", "DELUSER", acl).Err()
-		if err != nil {
-			return deleted, fmt.Errorf("error deleting acl: %v", err)
-		}
-		deleted = append(deleted, acl)
+	// Map to keep track of ACLs to add
+	toAdd := make(map[string]struct{})
+	for _, acl := range sourceAcls {
+		toAdd[acl] = struct{}{}
 	}
 
-	for _, acl := range aclsToSync {
-		err = destination.Do(context.Background(), "ACL", "SETUSER", acl).Err()
-		if err != nil {
+	// Delete ACLs not in source and remove from the toAdd map if present in destination
+	for _, acl := range destinationAcls {
+		if _, found := toAdd[acl]; found {
+			// If found in source, don't need to add, so remove from map
+			delete(toAdd, acl)
+		} else {
+			// If not found in source, delete from destination
+			if err := destination.Do(context.Background(), "ACL", "DELUSER", acl).Err(); err != nil {
+				return deleted, fmt.Errorf("error deleting acl: %v", err)
+			}
+			deleted = append(deleted, acl)
+		}
+	}
+
+	// Add remaining ACLs from source
+	for acl := range toAdd {
+		if err := destination.Do(context.Background(), "ACL", "SETUSER", acl).Err(); err != nil {
 			return deleted, fmt.Errorf("error setting acl: %v", err)
 		}
 	}
 
-	return deleted, err
+	return deleted, nil
 }
