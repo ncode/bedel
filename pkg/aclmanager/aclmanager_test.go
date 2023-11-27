@@ -55,8 +55,7 @@ repl_backlog_histlen:434`
 			mockResp: masterOutput,
 			want: []NodeInfo{
 				{
-					Host:     "172.21.0.3",
-					Port:     "6379",
+					Address:  "172.21.0.3:6379",
 					Function: "slave",
 				},
 			},
@@ -67,8 +66,7 @@ repl_backlog_histlen:434`
 			mockResp: slaveOutput,
 			want: []NodeInfo{
 				{
-					Host:     "aclmanager-master",
-					Port:     "6379",
+					Address:  "aclmanager-master:6379",
 					Function: "master",
 				},
 			},
@@ -91,6 +89,74 @@ repl_backlog_histlen:434`
 			}
 
 			assert.Equal(t, tt.want, nodes)
+		})
+	}
+}
+
+func TestListAcls(t *testing.T) {
+	tests := []struct {
+		name     string
+		mockResp []interface{}
+		want     []string
+		wantErr  bool
+	}{
+		{
+			name: "parse valid ACL list",
+			mockResp: []interface{}{
+				"user default on nopass ~* &* +@all",
+				"user alice on >password ~keys:* -@all +get +set +del",
+			},
+			want: []string{
+				"user default on nopass ~* &* +@all",
+				"user alice on >password ~keys:* -@all +get +set +del",
+			},
+			wantErr: false,
+		},
+		{
+			name:     "empty ACL list",
+			mockResp: []interface{}{},
+			want:     []string(nil),
+			wantErr:  false,
+		},
+		{
+			name:     "nil response from Redis",
+			mockResp: nil,
+			want:     nil,
+			wantErr:  false,
+		},
+		{
+			name:     "error from Redis client",
+			mockResp: nil,
+			want:     nil,
+			wantErr:  false,
+		},
+		{
+			name: "non-string elements in ACL list",
+			mockResp: []interface{}{
+				"user default on nopass ~* &* +@all",
+				123, // Invalid element
+			},
+			want: []string{
+				"user default on nopass ~* &* +@all",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+
+			// Mocking the response for the ACL LIST command
+			mock.ExpectDo("ACL", "LIST").SetVal(tt.mockResp)
+			acls, err := listAcls(redisClient)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("listAcls() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			assert.Equal(t, tt.want, acls)
 		})
 	}
 }

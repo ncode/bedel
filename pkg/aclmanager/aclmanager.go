@@ -3,12 +3,11 @@ package aclmanager
 import (
 	"bufio"
 	"context"
-	"github.com/fsnotify/fsnotify"
-	"log"
-	"regexp"
-	"strings"
-
+	"fmt"
 	"github.com/redis/go-redis/v9"
+	"regexp"
+	"slices"
+	"strings"
 )
 
 // AclManager containers the struct for bedel to manager the state of aclmanager acls
@@ -16,12 +15,11 @@ type AclManager struct {
 	Addr        string
 	Username    string
 	Password    string
-	AclFile     string
 	RedisClient *redis.Client
 }
 
 // New creates a new AclManager
-func New(addr string, username string, password string, aclFile string) *AclManager {
+func New(addr string, username string, password string) *AclManager {
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Username: username,
@@ -31,14 +29,12 @@ func New(addr string, username string, password string, aclFile string) *AclMana
 		Addr:        addr,
 		Username:    username,
 		Password:    password,
-		AclFile:     aclFile,
 		RedisClient: redisClient,
 	}
 }
 
 type NodeInfo struct {
-	Host     string
-	Port     string
+	Address  string
 	Function string
 }
 
@@ -59,13 +55,13 @@ func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
 
 		if matches := masterPortRegex.FindStringSubmatch(line); matches != nil {
 			masterPort = matches[1]
-			nodes = append(nodes, NodeInfo{Host: masterHost, Port: masterPort, Function: "master"})
+			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", masterHost, masterPort), Function: "master"})
 		}
 
 		if matches := slaveRegex.FindStringSubmatch(line); matches != nil {
 			ip := matches[slaveRegex.SubexpIndex("ip")]
 			port := matches[slaveRegex.SubexpIndex("port")]
-			nodes = append(nodes, NodeInfo{Host: ip, Port: port, Function: "slave"})
+			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", ip, port), Function: "slave"})
 		}
 	}
 
@@ -91,64 +87,62 @@ func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
 	return nodes, err
 }
 
-// ListAcls returns a list of acls in the cluster based on the redis acl list command
-func (a *AclManager) ListAcls() (acls []string, err error) {
-	result, err := a.RedisClient.Do(context.Background(), "ACL", "LIST").Result()
-	if err != nil {
-		return acls, err
-	}
-
-	aclList, ok := result.([]interface{})
-	if !ok {
-		log.Fatal("Error: Unexpected result format.")
-	}
-
-	for _, acl := range aclList {
-		acls = append(acls, acl.(string))
-	}
-
-	return acls, err
-}
-
-// WatchAclFile watches the acl file for changes and updates the cluster
-func (a *AclManager) WatchAclFile() error {
-	// Create new watcher.
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer watcher.Close()
-
-	// Start listening for events.
-	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				if event.Has(fsnotify.Create) {
-					if strings.Contains(event.Name, "users.acl") {
-						log.Println("ACL file created:", event.Name)
-					}
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				log.Println("error:", err)
-			}
-		}
-	}()
-
-	// Add a path.
-	err = watcher.Add(a.AclFile)
+// SyncAcls connects to master node and syncs the acls to the current node
+func (a *AclManager) SyncAcls() (err error) {
+	nodes, err := a.FindNodes()
 	if err != nil {
 		return err
 	}
 
-	// Block main goroutine forever.
-	<-make(chan struct{})
+	for _, node := range nodes {
+		if node.Function == "master" {
+			if a.Addr == node.Address {
+				return err
+			}
+			if err != nil {
+				return fmt.Errorf("error listing master acls: %v", err)
+			}
+			master := redis.NewClient(&redis.Options{
+				Addr:     node.Address,
+				Username: a.Username,
+				Password: a.Password,
+			})
+			defer master.Close()
+
+			masterAcls, err := listAcls(master)
+			if err != nil {
+				return fmt.Errorf("error listing master acls: %v", err)
+			}
+
+			currentAcls, err := listAcls(a.RedisClient)
+			if err != nil {
+				return fmt.Errorf("error listing current acls: %v", err)
+			}
+
+			aclsToSync := []string{}
+			for _, acl := range currentAcls {
+				if slices.Contains(masterAcls, acl) {
+					continue
+				}
+				err = a.RedisClient.Do(context.Background(), "ACL", "DELUSER", acl).Err()
+				if err != nil {
+					return fmt.Errorf("error deleting acl: %v", err)
+				}
+				aclsToSync = append(aclsToSync, acl)
+			}
+
+			for _, acl := range aclsToSync {
+				err = a.RedisClient.Do(context.Background(), "ACL", "SETUSER", acl).Err()
+				if err != nil {
+					return fmt.Errorf("error setting acl: %v", err)
+				}
+			}
+
+			if err != nil {
+				return err
+			}
+		}
+	}
 
 	return err
 }
@@ -156,4 +150,33 @@ func (a *AclManager) WatchAclFile() error {
 // Close closes the redis client
 func (a *AclManager) Close() error {
 	return a.RedisClient.Close()
+}
+
+// listAcls returns a list of acls in the cluster based on the redis acl list command
+func listAcls(client *redis.Client) (acls []string, err error) {
+	result, err := client.Do(context.Background(), "ACL", "LIST").Result()
+	if err != nil {
+		return acls, err
+	}
+
+	aclList, ok := result.([]interface{})
+	if !ok {
+		return acls, fmt.Errorf("expected type result format: %v", result)
+	}
+
+	length := len(aclList)
+	if length == 0 {
+		return acls, err
+	}
+
+	for _, acl := range aclList {
+		value, ok := acl.(string)
+		if !ok {
+			return acls, fmt.Errorf("expected type string: %v", acl)
+		}
+
+		acls = append(acls, value)
+	}
+
+	return acls, err
 }
