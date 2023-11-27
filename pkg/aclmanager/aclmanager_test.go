@@ -1,6 +1,8 @@
 package aclmanager
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/go-redis/redismock/v9"
@@ -157,6 +159,77 @@ func TestListAcls(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.want, acls)
+		})
+	}
+}
+
+func TestSyncAcls(t *testing.T) {
+	tests := []struct {
+		name            string
+		sourceAcls      []interface{}
+		destinationAcls []interface{}
+		expectedDeleted []string
+		expectedAdded   []string
+		listAclsError   error
+		redisDoError    error
+		wantErr         bool
+	}{
+		{
+			name:            "ACLs synced with deletions",
+			sourceAcls:      []interface{}{"acl1", "acl2"},
+			destinationAcls: []interface{}{"acl1", "acl3"},
+			expectedDeleted: []string{"acl3"},
+			expectedAdded:   []string{"acl2"},
+			wantErr:         false,
+		},
+		{
+			name:            "No ACLs to delete",
+			sourceAcls:      []interface{}{"acl1", "acl2"},
+			destinationAcls: []interface{}{"acl1", "acl2"},
+			expectedDeleted: nil,
+			wantErr:         false,
+		},
+		{
+			name:          "Error listing source ACLs",
+			listAclsError: fmt.Errorf("error listing source ACLs"),
+			wantErr:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sourceClient, sourceMock := redismock.NewClientMock()
+			destinationClient, destMock := redismock.NewClientMock()
+
+			if tt.listAclsError != nil {
+				sourceMock.ExpectDo("ACL", "LIST").SetErr(tt.listAclsError)
+			} else {
+				sourceMock.ExpectDo("ACL", "LIST").SetVal(tt.sourceAcls)
+			}
+
+			if tt.listAclsError != nil {
+				destMock.ExpectDo("ACL", "LIST").SetErr(tt.listAclsError)
+			} else {
+				destMock.ExpectDo("ACL", "LIST").SetVal(tt.destinationAcls)
+				if tt.expectedDeleted != nil {
+					for _, acl := range tt.expectedDeleted {
+						destMock.ExpectDo("ACL", "DELUSER", acl).SetVal("OK")
+					}
+				}
+				if tt.expectedAdded != nil {
+					for _, acl := range tt.expectedAdded {
+						destMock.ExpectDo("ACL", "SETUSER", acl).SetVal("OK")
+					}
+				}
+			}
+
+			deleted, err := syncAcls(sourceClient, destinationClient)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("syncAcls() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !reflect.DeepEqual(deleted, tt.expectedDeleted) {
+				t.Errorf("syncAcls() deleted = %v, expectedDeleted %v", deleted, tt.expectedDeleted)
+			}
 		})
 	}
 }

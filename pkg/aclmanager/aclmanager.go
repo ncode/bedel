@@ -109,37 +109,9 @@ func (a *AclManager) SyncAcls() (err error) {
 			})
 			defer master.Close()
 
-			masterAcls, err := listAcls(master)
+			_, err := syncAcls(master, a.RedisClient)
 			if err != nil {
-				return fmt.Errorf("error listing master acls: %v", err)
-			}
-
-			currentAcls, err := listAcls(a.RedisClient)
-			if err != nil {
-				return fmt.Errorf("error listing current acls: %v", err)
-			}
-
-			aclsToSync := []string{}
-			for _, acl := range currentAcls {
-				if slices.Contains(masterAcls, acl) {
-					continue
-				}
-				err = a.RedisClient.Do(context.Background(), "ACL", "DELUSER", acl).Err()
-				if err != nil {
-					return fmt.Errorf("error deleting acl: %v", err)
-				}
-				aclsToSync = append(aclsToSync, acl)
-			}
-
-			for _, acl := range aclsToSync {
-				err = a.RedisClient.Do(context.Background(), "ACL", "SETUSER", acl).Err()
-				if err != nil {
-					return fmt.Errorf("error setting acl: %v", err)
-				}
-			}
-
-			if err != nil {
-				return err
+				return fmt.Errorf("error syncing acls: %v", err)
 			}
 		}
 	}
@@ -179,4 +151,39 @@ func listAcls(client *redis.Client) (acls []string, err error) {
 	}
 
 	return acls, err
+}
+
+// syncAcls returns a list of acls in the cluster based on the redis acl list command
+func syncAcls(source *redis.Client, destination *redis.Client) (deleted []string, err error) {
+	aclsToSync, err := listAcls(source)
+	if err != nil {
+		return deleted, fmt.Errorf("error listing master acls: %v", err)
+	}
+
+	currentAcls, err := listAcls(destination)
+	if err != nil {
+		return deleted, fmt.Errorf("error listing current acls: %v", err)
+	}
+
+	for _, acl := range currentAcls {
+		acl := acl
+		if pos := slices.Index(aclsToSync, acl); pos != -1 {
+			aclsToSync = slices.Delete(aclsToSync, pos, pos+1)
+			continue
+		}
+		err = destination.Do(context.Background(), "ACL", "DELUSER", acl).Err()
+		if err != nil {
+			return deleted, fmt.Errorf("error deleting acl: %v", err)
+		}
+		deleted = append(deleted, acl)
+	}
+
+	for _, acl := range aclsToSync {
+		err = destination.Do(context.Background(), "ACL", "SETUSER", acl).Err()
+		if err != nil {
+			return deleted, fmt.Errorf("error setting acl: %v", err)
+		}
+	}
+
+	return deleted, err
 }
