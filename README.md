@@ -1,9 +1,11 @@
 # Bedel 
 
+[![Go](https://github.com/ncode/port53/actions/workflows/go.yml/badge.svg)](https://github.com/ncode/port53/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ncode/bedel)](https://goreportcard.com/report/github.com/ncode/bedel)
 [![codecov](https://codecov.io/gh/ncode/bedel/graph/badge.svg?token=N98KAO33K5)](https://codecov.io/gh/ncode/bedel)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-`bedel` is a tool designed to address a specific challenge with Redis: synchronizing users generated externally, such as through the Vault database backend, with the Redis configuration. This utility ensures that Redis user configurations are up-to-date and consistent with external user generation sources. More info [here](https://github.com/redis/redis/issues/7988).
+`bedel` is a tool designed to address a specific challenge with Redis: synchronizing users generated outside of the configuration file, such as through the Vault database backend. This utility ensures that Redis acls are up-to-date and consistent across all nodes. More info [here](https://github.com/redis/redis/issues/7988).
 
 ## Features
 
