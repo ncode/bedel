@@ -1,37 +1,51 @@
 version: '3.7'
 
 services:
-  redis-master:
+  redis0001:
     image: redis:latest
-    container_name: redis-master
+    container_name: redis0001
     ports:
       - "6379:6379"
     volumes:
-      - ./master:/usr/local/etc/redis:rw
+      - ./redis0001:/usr/local/etc/redis:rw
     command: redis-server /usr/local/etc/redis/redis.conf
 
-  redis-slave1:
+  redis0002:
     image: redis:latest
-    container_name: redis-slave1
+    container_name: redis0002
     volumes:
-      - ./slave01:/usr/local/etc/redis:rw
+      - ./redis0002:/usr/local/etc/redis:rw
     command: 
       - "redis-server"
       - "/usr/local/etc/redis/redis.conf"
       - "--slaveof"
-      - "redis-master"
+      - "redis0001"
       - "6379"
-
   
-  redis-slave2:
+  redis0003:
     image: redis:latest
     container_name: redis-slave2
     volumes:
-      - ./slave02:/usr/local/etc/redis:rw
+      - ./redis0003:/usr/local/etc/redis:rw
     command:
       - "redis-server"
       - "/usr/local/etc/redis/redis.conf"
       - "--slaveof"
-      - "redis-master"
+      - "redis0001"
       - "6379"
+
+  vault:
+    image: hashicorp/vault:latest
+    container_name: vault
+    ports:
+      - "8200:8200"
+    volumes:
+      - ./vault:/scripts:ro
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    entrypoint: "/scripts/setup.sh"
 
