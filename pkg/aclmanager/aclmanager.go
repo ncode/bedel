@@ -30,10 +30,16 @@ var logger = slog.New(
 	),
 )
 
+const (
+	primary = iota
+	follower
+)
+
 var (
-	slaveRegex      = regexp.MustCompile(`slave\d+:ip=(?P<ip>.+),port=(?P<port>\d+)`)
-	masterHostRegex = regexp.MustCompile(`master_host:(?P<host>.+)`)
-	masterPortRegex = regexp.MustCompile(`master_port:(?P<port>\d+)`)
+	followerRegex    = regexp.MustCompile(`slave\d+:ip=(?P<ip>.+),port=(?P<port>\d+)`)
+	primaryHostRegex = regexp.MustCompile(`master_host:(?P<host>.+)`)
+	primaryPortRegex = regexp.MustCompile(`master_port:(?P<port>\d+)`)
+	role             = regexp.MustCompile(`role:master`)
 )
 
 // AclManager containers the struct for bedel to manager the state of aclmanager acls
@@ -61,7 +67,7 @@ func New(addr string, username string, password string) *AclManager {
 
 type NodeInfo struct {
 	Address  string
-	Function string
+	Function int
 }
 
 func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
@@ -71,19 +77,25 @@ func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		if matches := masterHostRegex.FindStringSubmatch(line); matches != nil {
+		if viper.GetInt("debugLevel") == 9 {
+			logger.Debug("Parsing line looking for masterHost", "content", line)
+		}
+		if matches := primaryHostRegex.FindStringSubmatch(line); matches != nil {
 			masterHost = matches[1]
 		}
 
-		if matches := masterPortRegex.FindStringSubmatch(line); matches != nil {
+		if viper.GetInt("debugLevel") == 9 {
+			logger.Debug("Parsing line looking for follower", "content", line)
+		}
+		if matches := primaryPortRegex.FindStringSubmatch(line); matches != nil {
 			masterPort = matches[1]
-			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", masterHost, masterPort), Function: "master"})
+			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", masterHost, masterPort), Function: primary})
 		}
 
-		if matches := slaveRegex.FindStringSubmatch(line); matches != nil {
-			ip := matches[slaveRegex.SubexpIndex("ip")]
-			port := matches[slaveRegex.SubexpIndex("port")]
-			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", ip, port), Function: "slave"})
+		if matches := followerRegex.FindStringSubmatch(line); matches != nil {
+			ip := matches[followerRegex.SubexpIndex("ip")]
+			port := matches[followerRegex.SubexpIndex("port")]
+			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", ip, port), Function: follower})
 		}
 	}
 
@@ -110,6 +122,17 @@ func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
 	return nodes, err
 }
 
+// IsItPrimary check if the current node is the primary node
+func (a *AclManager) IsItPrimary() (primary bool, err error) {
+	slog.Debug("Check if it's a connection to the primary node")
+	replicationInfo, err := a.RedisClient.Info(context.Background(), "replication").Result()
+	if err != nil {
+		return primary, err
+	}
+
+	return role.MatchString(replicationInfo), err
+}
+
 // SyncAcls connects to master node and syncs the acls to the current node
 func (a *AclManager) SyncAcls() (err error) {
 	logger.Debug("Syncing acls")
@@ -120,7 +143,7 @@ func (a *AclManager) SyncAcls() (err error) {
 
 	ctx := context.Background()
 	for _, node := range nodes {
-		if node.Function == "master" {
+		if node.Function == primary {
 			if a.Addr == node.Address {
 				return err
 			}
@@ -199,10 +222,10 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 		if _, found := toAdd[acl]; found {
 			// If found in source, don't need to add, so remove from map
 			delete(toAdd, acl)
-			logger.Debug("ACL for %s already in sync", "acl", user)
+			logger.Debug("ACL for %s already in sync", "user", user)
 		} else {
 			// If not found in source, delete from destination
-			logger.Info("Deleting ACL for %s", user)
+			logger.Info("Deleting ACL", "user", user)
 			if err := destination.Do(context.Background(), "ACL", "DELUSER", acl).Err(); err != nil {
 				return deleted, fmt.Errorf("error deleting acl: %v", err)
 			}
@@ -213,7 +236,7 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 	// Add remaining ACLs from source
 	for acl := range toAdd {
 		user := strings.Split(acl, " ")[1]
-		logger.Info("Syncing ACL for %s", user)
+		logger.Info("Syncing ACL", "user", user)
 		if err := destination.Do(context.Background(), "ACL", "SETUSER", acl).Err(); err != nil {
 			return deleted, fmt.Errorf("error setting acl: %v", err)
 		}

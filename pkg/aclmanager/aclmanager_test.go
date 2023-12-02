@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	masterOutput = `
+	primaryOutput = `
 # Replication
 role:master
 connected_slaves:1
@@ -25,7 +25,7 @@ repl_backlog_size:1048576
 repl_backlog_first_byte_offset:1
 repl_backlog_histlen:322`
 
-	slaveOutput = `
+	followerOutput = `
 # Replication
 role:slave
 master_host:172.21.0.2
@@ -58,22 +58,22 @@ func TestFindNodes(t *testing.T) {
 	}{
 		{
 			name:     "parse master output",
-			mockResp: masterOutput,
+			mockResp: primaryOutput,
 			want: []NodeInfo{
 				{
 					Address:  "172.21.0.3:6379",
-					Function: "slave",
+					Function: follower,
 				},
 			},
 			wantErr: false,
 		},
 		{
-			name:     "parse slave output",
-			mockResp: slaveOutput,
+			name:     "parse follower output",
+			mockResp: followerOutput,
 			want: []NodeInfo{
 				{
 					Address:  "172.21.0.2:6379",
-					Function: "master",
+					Function: primary,
 				},
 			},
 			wantErr: false,
@@ -236,9 +236,51 @@ func TestMirrorAcls(t *testing.T) {
 	}
 }
 
-func BenchmarkParseRedisOutputSlave(b *testing.B) {
+func TestIsItPrimary(t *testing.T) {
+	// Sample primary and follower output for testing
+
+	tests := []struct {
+		name     string
+		mockResp string
+		want     bool
+		wantErr  bool
+	}{
+		{
+			name:     "parse primary output",
+			mockResp: primaryOutput,
+			want:     true,
+			wantErr:  false,
+		},
+		{
+			name:     "parse follower output",
+			mockResp: followerOutput,
+			want:     false,
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+
+			// Mocking the response for the Info function
+			mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			aclManager := AclManager{RedisClient: redisClient}
+
+			nodes, err := aclManager.IsItPrimary()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			assert.Equal(t, tt.want, nodes)
+		})
+	}
+}
+
+func BenchmarkParseRedisOutputFollower(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, err := parseRedisOutput(slaveOutput)
+		_, err := parseRedisOutput(followerOutput)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -247,7 +289,7 @@ func BenchmarkParseRedisOutputSlave(b *testing.B) {
 
 func BenchmarkParseRedisOutputMaster(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, err := parseRedisOutput(masterOutput)
+		_, err := parseRedisOutput(primaryOutput)
 		if err != nil {
 			b.Fatal(err)
 		}
