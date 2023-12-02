@@ -68,6 +68,7 @@ func initConfig() {
 	}
 
 	viper.SetDefault("syncInterval", 10)
+	viper.SetDefault("logLevel", "info")
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err == nil {

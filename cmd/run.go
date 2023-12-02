@@ -24,7 +24,7 @@ import (
 // runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Run the acl manager in mood loop, it will sync the slave with the master",
+	Short: "Run the acl manager in mood loop, it will sync the follower with the master",
 	Run: func(cmd *cobra.Command, args []string) {
 		mgr := aclmanager.New(viper.GetString("address"), viper.GetString("password"), viper.GetString("password"))
 		ctx := cmd.Context()
