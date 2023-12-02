@@ -47,7 +47,7 @@ func init() {
 	viper.BindPFlag("address", rootCmd.PersistentFlags().Lookup("address"))
 	rootCmd.PersistentFlags().StringP("password", "p", "", "password to manage acls")
 	viper.BindPFlag("password", rootCmd.PersistentFlags().Lookup("password"))
-	rootCmd.PersistentFlags().StringP("username", "u", "", "username to manage acls")
+	rootCmd.PersistentFlags().StringP("username", "u", "default", "username to manage acls")
 	viper.BindPFlag("username", rootCmd.PersistentFlags().Lookup("username"))
 }
 

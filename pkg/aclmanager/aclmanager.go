@@ -6,9 +6,28 @@ import (
 	"fmt"
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
+	"log/slog"
+	"os"
+	"path"
 	"regexp"
 	"strings"
 	"time"
+)
+
+var logger = slog.New(
+	slog.NewJSONHandler(
+		os.Stdout,
+		&slog.HandlerOptions{
+			AddSource: true,
+			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.SourceKey {
+					s := a.Value.Any().(*slog.Source)
+					s.File = path.Base(s.File)
+				}
+				return a
+			},
+		},
+	),
 )
 
 var (
@@ -77,6 +96,7 @@ func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
 
 // FindNodes returns a list of nodes in the cluster based on the redis info replication command
 func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
+	slog.Debug("Finding nodes")
 	replicationInfo, err := a.RedisClient.Info(context.Background(), "replication").Result()
 	if err != nil {
 		return nodes, err
@@ -92,6 +112,7 @@ func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
 
 // SyncAcls connects to master node and syncs the acls to the current node
 func (a *AclManager) SyncAcls() (err error) {
+	logger.Debug("Syncing acls")
 	nodes, err := a.FindNodes()
 	if err != nil {
 		return err
@@ -155,6 +176,7 @@ func listAcls(ctx context.Context, client *redis.Client) (acls []string, err err
 
 // mirrorAcls returns a list of acls in the cluster based on the redis acl list command
 func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Client) (deleted []string, err error) {
+	slog.Debug("Mirroring acls")
 	sourceAcls, err := listAcls(ctx, source)
 	if err != nil {
 		return nil, fmt.Errorf("error listing source acls: %v", err)
@@ -173,11 +195,14 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 
 	// Delete ACLs not in source and remove from the toAdd map if present in destination
 	for _, acl := range destinationAcls {
+		user := strings.Split(acl, " ")[1]
 		if _, found := toAdd[acl]; found {
 			// If found in source, don't need to add, so remove from map
 			delete(toAdd, acl)
+			logger.Debug("ACL for %s already in sync", "acl", user)
 		} else {
 			// If not found in source, delete from destination
+			logger.Info("Deleting ACL for %s", user)
 			if err := destination.Do(context.Background(), "ACL", "DELUSER", acl).Err(); err != nil {
 				return deleted, fmt.Errorf("error deleting acl: %v", err)
 			}
@@ -187,6 +212,8 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 
 	// Add remaining ACLs from source
 	for acl := range toAdd {
+		user := strings.Split(acl, " ")[1]
+		logger.Info("Syncing ACL for %s", user)
 		if err := destination.Do(context.Background(), "ACL", "SETUSER", acl).Err(); err != nil {
 			return deleted, fmt.Errorf("error setting acl: %v", err)
 		}
