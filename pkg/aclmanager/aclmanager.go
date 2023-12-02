@@ -31,8 +31,8 @@ var logger = slog.New(
 )
 
 const (
-	primary = iota
-	follower
+	Primary = iota
+	Follower
 )
 
 var (
@@ -85,17 +85,17 @@ func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
 		}
 
 		if viper.GetInt("debugLevel") == 9 {
-			logger.Debug("Parsing line looking for follower", "content", line)
+			logger.Debug("Parsing line looking for Follower", "content", line)
 		}
 		if matches := primaryPortRegex.FindStringSubmatch(line); matches != nil {
 			masterPort = matches[1]
-			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", masterHost, masterPort), Function: primary})
+			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", masterHost, masterPort), Function: Primary})
 		}
 
 		if matches := followerRegex.FindStringSubmatch(line); matches != nil {
 			ip := matches[followerRegex.SubexpIndex("ip")]
 			port := matches[followerRegex.SubexpIndex("port")]
-			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", ip, port), Function: follower})
+			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", ip, port), Function: Follower})
 		}
 	}
 
@@ -122,15 +122,19 @@ func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
 	return nodes, err
 }
 
-// IsItPrimary check if the current node is the primary node
-func (a *AclManager) IsItPrimary() (primary bool, err error) {
-	slog.Debug("Check if it's a connection to the primary node")
+// CurrentFunction check if the current node is the Primary node
+func (a *AclManager) CurrentFunction() (function int, err error) {
+	slog.Debug("Check node current function")
 	replicationInfo, err := a.RedisClient.Info(context.Background(), "replication").Result()
 	if err != nil {
-		return primary, err
+		return function, err
 	}
 
-	return role.MatchString(replicationInfo), err
+	if role.MatchString(replicationInfo) {
+		return Primary, nil
+	}
+
+	return Follower, err
 }
 
 // SyncAcls connects to master node and syncs the acls to the current node
@@ -143,7 +147,7 @@ func (a *AclManager) SyncAcls() (err error) {
 
 	ctx := context.Background()
 	for _, node := range nodes {
-		if node.Function == primary {
+		if node.Function == Primary {
 			if a.Addr == node.Address {
 				return err
 			}
@@ -255,9 +259,16 @@ func (a *AclManager) Loop(ctx context.Context) (err error) {
 		case <-ctx.Done():
 			return err
 		case <-ticker.C:
-			err = a.SyncAcls()
+			function, err := a.CurrentFunction()
 			if err != nil {
-				return fmt.Errorf("error syncing acls: %v", err)
+				logger.Warn("unable to check if it's a primary", "message", err)
+			}
+			if function == Follower {
+				err = a.SyncAcls()
+				if err != nil {
+					logger.Warn("unable to sync acls from primary", "message", err)
+					return fmt.Errorf("error syncing acls: %v", err)
+				}
 			}
 		}
 	}

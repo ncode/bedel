@@ -62,18 +62,18 @@ func TestFindNodes(t *testing.T) {
 			want: []NodeInfo{
 				{
 					Address:  "172.21.0.3:6379",
-					Function: follower,
+					Function: Follower,
 				},
 			},
 			wantErr: false,
 		},
 		{
-			name:     "parse follower output",
+			name:     "parse Follower output",
 			mockResp: followerOutput,
 			want: []NodeInfo{
 				{
 					Address:  "172.21.0.2:6379",
-					Function: primary,
+					Function: Primary,
 				},
 			},
 			wantErr: false,
@@ -178,16 +178,16 @@ func TestMirrorAcls(t *testing.T) {
 	}{
 		{
 			name:            "ACLs synced with deletions",
-			sourceAcls:      []interface{}{"acl1", "acl2"},
-			destinationAcls: []interface{}{"acl1", "acl3"},
-			expectedDeleted: []string{"acl3"},
-			expectedAdded:   []string{"acl2"},
+			sourceAcls:      []interface{}{"user acl1", "user acl2"},
+			destinationAcls: []interface{}{"user acl1", "user acl3"},
+			expectedDeleted: []string{"user acl3"},
+			expectedAdded:   []string{"user acl2"},
 			wantErr:         false,
 		},
 		{
 			name:            "No ACLs to delete",
-			sourceAcls:      []interface{}{"acl1", "acl2"},
-			destinationAcls: []interface{}{"acl1", "acl2"},
+			sourceAcls:      []interface{}{"user acl1", "user acl2"},
+			destinationAcls: []interface{}{"user acl1", "user acl2"},
 			expectedDeleted: nil,
 			wantErr:         false,
 		},
@@ -237,7 +237,7 @@ func TestMirrorAcls(t *testing.T) {
 }
 
 func TestIsItPrimary(t *testing.T) {
-	// Sample primary and follower output for testing
+	// Sample Primary and Follower output for testing
 
 	tests := []struct {
 		name     string
@@ -246,13 +246,13 @@ func TestIsItPrimary(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name:     "parse primary output",
+			name:     "parse Primary output",
 			mockResp: primaryOutput,
 			want:     true,
 			wantErr:  false,
 		},
 		{
-			name:     "parse follower output",
+			name:     "parse Follower output",
 			mockResp: followerOutput,
 			want:     false,
 			wantErr:  false,
@@ -267,7 +267,7 @@ func TestIsItPrimary(t *testing.T) {
 			mock.ExpectInfo("replication").SetVal(tt.mockResp)
 			aclManager := AclManager{RedisClient: redisClient}
 
-			nodes, err := aclManager.IsItPrimary()
+			nodes, err := aclManager.CurrentFunction()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
 				return
