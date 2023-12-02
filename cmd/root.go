@@ -47,7 +47,7 @@ func init() {
 	viper.BindPFlag("address", rootCmd.PersistentFlags().Lookup("address"))
 	rootCmd.PersistentFlags().StringP("password", "p", "", "password to manage acls")
 	viper.BindPFlag("password", rootCmd.PersistentFlags().Lookup("password"))
-	rootCmd.PersistentFlags().StringP("username", "u", "default", "username to manage acls")
+	rootCmd.PersistentFlags().StringP("username", "u", "", "username to manage acls")
 	viper.BindPFlag("username", rootCmd.PersistentFlags().Lookup("username"))
 }
 
@@ -69,6 +69,7 @@ func initConfig() {
 
 	viper.SetDefault("syncInterval", 10)
 	viper.SetDefault("logLevel", "info")
+	viper.SetDefault("username", "default")
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err == nil {
@@ -86,7 +87,6 @@ func initConfig() {
 	}
 
 	if !viper.IsSet("username") {
-		fmt.Fprintln(os.Stderr, "username is required")
-		os.Exit(1)
+		viper.SetDefault("username", "default")
 	}
 }

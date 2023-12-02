@@ -27,7 +27,7 @@ var runOnceCmd = &cobra.Command{
 	Use:   "runOnce",
 	Short: "Run the acl manager once, it will sync the follower with the master",
 	Run: func(cmd *cobra.Command, args []string) {
-		mgr := aclmanager.New(viper.GetString("address"), viper.GetString("password"), viper.GetString("password"))
+		mgr := aclmanager.New(viper.GetString("address"), viper.GetString("username"), viper.GetString("password"))
 		err := mgr.SyncAcls()
 		if err != nil {
 			panic(err)

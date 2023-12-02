@@ -40,6 +40,7 @@ var (
 	primaryHostRegex = regexp.MustCompile(`master_host:(?P<host>.+)`)
 	primaryPortRegex = regexp.MustCompile(`master_port:(?P<port>\d+)`)
 	role             = regexp.MustCompile(`role:master`)
+	filterUser       = regexp.MustCompile(`^user\s+`)
 )
 
 // AclManager containers the struct for bedel to manager the state of aclmanager acls
@@ -222,15 +223,15 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 
 	// Delete ACLs not in source and remove from the toAdd map if present in destination
 	for _, acl := range destinationAcls {
-		user := strings.Split(acl, " ")[1]
+		username := strings.Split(acl, " ")[1]
 		if _, found := toAdd[acl]; found {
 			// If found in source, don't need to add, so remove from map
 			delete(toAdd, acl)
-			logger.Debug("ACL for %s already in sync", "user", user)
+			logger.Debug("ACL for %s already in sync", "username", username)
 		} else {
 			// If not found in source, delete from destination
-			logger.Info("Deleting ACL", "user", user)
-			if err := destination.Do(context.Background(), "ACL", "DELUSER", acl).Err(); err != nil {
+			logger.Info("Deleting ACL", "username", username)
+			if err := destination.Do(context.Background(), "ACL", "DELUSER", username).Err(); err != nil {
 				return deleted, fmt.Errorf("error deleting acl: %v", err)
 			}
 			deleted = append(deleted, acl)
@@ -239,9 +240,9 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 
 	// Add remaining ACLs from source
 	for acl := range toAdd {
-		user := strings.Split(acl, " ")[1]
-		logger.Info("Syncing ACL", "user", user)
-		if err := destination.Do(context.Background(), "ACL", "SETUSER", acl).Err(); err != nil {
+		username := strings.Split(acl, " ")[1]
+		logger.Info("Syncing ACL", "username", username)
+		if err := destination.Do(context.Background(), "ACL", "SETUSER", filterUser.ReplaceAllString(acl, "")).Err(); err != nil {
 			return deleted, fmt.Errorf("error setting acl: %v", err)
 		}
 	}

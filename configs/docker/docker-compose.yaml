@@ -38,9 +38,29 @@ services:
     image: ncode/bedel:dev
     container_name: bedel_redis0001
     command:
-      - "bedel"
+      - "run"
       - "-a"
       - "redis0001:6379"
+      - "-p"
+      - "bedel-integration-test"
+
+  bedel_redis0002:
+    image: ncode/bedel:dev
+    container_name: bedel_redis0002
+    command:
+      - "run"
+      - "-a"
+      - "redis0002:6379"
+      - "-p"
+      - "bedel-integration-test"
+
+  bedel_redis0003:
+    image: ncode/bedel:dev
+    container_name: bedel_redis0003
+    command:
+      - "run"
+      - "-a"
+      - "redis0003:6379"
       - "-p"
       - "bedel-integration-test"
 
