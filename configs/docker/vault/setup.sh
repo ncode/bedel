@@ -18,7 +18,7 @@ setup_vault(){
 
     sleep 1
 
-    instances="redis0001 redis0002 redis0003"
+    instances="redis0001 redis0002"
     for instance in $instances ; do
         vault write "database/config/${instance}" \
             plugin_name="redis-database-plugin" \
@@ -39,7 +39,6 @@ setup_vault(){
     for i in $(seq 1 10) ; do
         vault read database/creds/admin-redis0001
         vault read database/creds/admin-redis0002
-        vault read database/creds/admin-redis0003
     done
     echo "Vault configuration complete"
 }
