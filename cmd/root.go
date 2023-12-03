@@ -17,13 +17,33 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"path"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var cfgFile string
+
+var lvl = new(slog.LevelVar)
+var logger = slog.New(
+	slog.NewJSONHandler(
+		os.Stdout,
+		&slog.HandlerOptions{
+			Level:     lvl,
+			AddSource: true,
+			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.SourceKey {
+					s := a.Value.Any().(*slog.Source)
+					s.File = path.Base(s.File)
+				}
+				return a
+			},
+		},
+	),
+)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -49,6 +69,9 @@ func init() {
 	viper.BindPFlag("password", rootCmd.PersistentFlags().Lookup("password"))
 	rootCmd.PersistentFlags().StringP("username", "u", "", "username to manage acls")
 	viper.BindPFlag("username", rootCmd.PersistentFlags().Lookup("username"))
+	rootCmd.PersistentFlags().StringP("logLevel", "l", "INFO", "set default logLevel")
+	viper.BindPFlag("logLevel", rootCmd.PersistentFlags().Lookup("logLevel"))
+
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -68,7 +91,6 @@ func initConfig() {
 	}
 
 	viper.SetDefault("syncInterval", 10)
-	viper.SetDefault("logLevel", "info")
 	viper.SetDefault("username", "default")
 	viper.AutomaticEnv()
 
@@ -89,4 +111,11 @@ func initConfig() {
 	if !viper.IsSet("username") {
 		viper.SetDefault("username", "default")
 	}
+
+	err := lvl.UnmarshalText([]byte(viper.GetString("logLevel")))
+	if err != nil {
+		logger.Error(err.Error())
+		os.Exit(1)
+	}
+	slog.SetDefault(logger)
 }
