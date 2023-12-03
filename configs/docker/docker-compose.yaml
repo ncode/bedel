@@ -15,24 +15,40 @@ services:
     container_name: redis0002
     volumes:
       - ./redis0002:/usr/local/etc/redis:rw
-    command: 
-      - "redis-server"
-      - "/usr/local/etc/redis/redis.conf"
-      - "--slaveof"
-      - "redis0001"
-      - "6379"
-  
-  redis0003:
-    image: redis:latest
-    container_name: redis-slave2
-    volumes:
-      - ./redis0003:/usr/local/etc/redis:rw
     command:
       - "redis-server"
       - "/usr/local/etc/redis/redis.conf"
       - "--slaveof"
       - "redis0001"
       - "6379"
+
+  bedel_redis0001:
+    image: ncode/bedel:dev
+    container_name: bedel_redis0001
+    depends_on:
+      - vault
+    command:
+      - "run"
+      - "-a"
+      - "redis0001:6379"
+      - "-p"
+      - "bedel-integration-test"
+      - "-l"
+      - "info"
+
+  bedel_redis0002:
+    image: ncode/bedel:dev
+    container_name: bedel_redis0002
+    depends_on:
+      - vault
+    command:
+      - "run"
+      - "-a"
+      - "redis0002:6379"
+      - "-p"
+      - "bedel-integration-test"
+      - "-l"
+      - "info"
 
   vault:
     image: hashicorp/vault:latest

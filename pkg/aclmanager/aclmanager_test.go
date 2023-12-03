@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	masterOutput = `
+	primaryOutput = `
 # Replication
 role:master
 connected_slaves:1
@@ -25,7 +25,7 @@ repl_backlog_size:1048576
 repl_backlog_first_byte_offset:1
 repl_backlog_histlen:322`
 
-	slaveOutput = `
+	followerOutput = `
 # Replication
 role:slave
 master_host:172.21.0.2
@@ -58,22 +58,22 @@ func TestFindNodes(t *testing.T) {
 	}{
 		{
 			name:     "parse master output",
-			mockResp: masterOutput,
+			mockResp: primaryOutput,
 			want: []NodeInfo{
 				{
 					Address:  "172.21.0.3:6379",
-					Function: "slave",
+					Function: Follower,
 				},
 			},
 			wantErr: false,
 		},
 		{
-			name:     "parse slave output",
-			mockResp: slaveOutput,
+			name:     "parse Follower output",
+			mockResp: followerOutput,
 			want: []NodeInfo{
 				{
 					Address:  "172.21.0.2:6379",
-					Function: "master",
+					Function: Primary,
 				},
 			},
 			wantErr: false,
@@ -178,16 +178,16 @@ func TestMirrorAcls(t *testing.T) {
 	}{
 		{
 			name:            "ACLs synced with deletions",
-			sourceAcls:      []interface{}{"acl1", "acl2"},
-			destinationAcls: []interface{}{"acl1", "acl3"},
+			sourceAcls:      []interface{}{"user acl1", "user acl2"},
+			destinationAcls: []interface{}{"user acl1", "user acl3"},
 			expectedDeleted: []string{"acl3"},
 			expectedAdded:   []string{"acl2"},
 			wantErr:         false,
 		},
 		{
 			name:            "No ACLs to delete",
-			sourceAcls:      []interface{}{"acl1", "acl2"},
-			destinationAcls: []interface{}{"acl1", "acl2"},
+			sourceAcls:      []interface{}{"user acl1", "user acl2"},
+			destinationAcls: []interface{}{"user acl1", "user acl2"},
 			expectedDeleted: nil,
 			wantErr:         false,
 		},
@@ -225,20 +225,65 @@ func TestMirrorAcls(t *testing.T) {
 				}
 			}
 
-			deleted, err := mirrorAcls(context.Background(), sourceClient, destinationClient)
+			added, deleted, err := mirrorAcls(context.Background(), sourceClient, destinationClient)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !reflect.DeepEqual(deleted, tt.expectedDeleted) {
 				t.Errorf("mirrorAcls() deleted = %v, expectedDeleted %v", deleted, tt.expectedDeleted)
 			}
+			if !reflect.DeepEqual(added, tt.expectedAdded) {
+				t.Errorf("mirrorAcls() added = %v, expectedAdded %v", deleted, tt.expectedDeleted)
+			}
 		})
 	}
 }
 
-func BenchmarkParseRedisOutputSlave(b *testing.B) {
+func TestIsItPrimary(t *testing.T) {
+	// Sample Primary and Follower output for testing
+
+	tests := []struct {
+		name     string
+		mockResp string
+		want     int
+		wantErr  bool
+	}{
+		{
+			name:     "parse Primary output",
+			mockResp: primaryOutput,
+			want:     Primary,
+			wantErr:  false,
+		},
+		{
+			name:     "parse Follower output",
+			mockResp: followerOutput,
+			want:     Follower,
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+
+			// Mocking the response for the Info function
+			mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			aclManager := AclManager{RedisClient: redisClient}
+
+			nodes, err := aclManager.CurrentFunction()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			assert.Equal(t, tt.want, nodes)
+		})
+	}
+}
+
+func BenchmarkParseRedisOutputFollower(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, err := parseRedisOutput(slaveOutput)
+		_, err := parseRedisOutput(followerOutput)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -247,7 +292,7 @@ func BenchmarkParseRedisOutputSlave(b *testing.B) {
 
 func BenchmarkParseRedisOutputMaster(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, err := parseRedisOutput(masterOutput)
+		_, err := parseRedisOutput(primaryOutput)
 		if err != nil {
 			b.Fatal(err)
 		}
