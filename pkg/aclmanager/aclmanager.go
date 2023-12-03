@@ -137,10 +137,11 @@ func (a *AclManager) SyncAcls() (err error) {
 			})
 			defer master.Close()
 
-			_, err := mirrorAcls(ctx, master, a.RedisClient)
+			added, deleted, err := mirrorAcls(ctx, master, a.RedisClient)
 			if err != nil {
 				return fmt.Errorf("error syncing acls: %v", err)
 			}
+			slog.Info("Synced acls", "added", added, "deleted", deleted)
 		}
 	}
 
@@ -181,16 +182,16 @@ func listAcls(ctx context.Context, client *redis.Client) (acls []string, err err
 }
 
 // mirrorAcls returns a list of acls in the cluster based on the redis acl list command
-func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Client) (deleted []string, err error) {
+func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Client) (added []string, deleted []string, err error) {
 	slog.Debug("Mirroring acls")
 	sourceAcls, err := listAcls(ctx, source)
 	if err != nil {
-		return nil, fmt.Errorf("error listing source acls: %v", err)
+		return nil, nil, fmt.Errorf("error listing source acls: %v", err)
 	}
 
 	destinationAcls, err := listAcls(ctx, destination)
 	if err != nil {
-		return nil, fmt.Errorf("error listing current acls: %v", err)
+		return nil, nil, fmt.Errorf("error listing current acls: %v", err)
 	}
 
 	// Map to keep track of ACLs to add
@@ -200,38 +201,40 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 	}
 
 	// Delete ACLs not in source and remove from the toAdd map if present in destination
+	var insync uint
 	for _, acl := range destinationAcls {
 		username := strings.Split(acl, " ")[1]
 		if _, found := toAdd[acl]; found {
 			// If found in source, don't need to add, so remove from map
 			delete(toAdd, acl)
 			slog.Debug("ACL already in sync", "username", username)
+			insync++
 		} else {
 			// If not found in source, delete from destination
-			slog.Info("Deleting ACL", "username", username)
+			slog.Debug("Deleting ACL", "username", username)
 			if err := destination.Do(context.Background(), "ACL", "DELUSER", username).Err(); err != nil {
-				return deleted, fmt.Errorf("error deleting acl: %v", err)
+				return nil, nil, fmt.Errorf("error deleting acl: %v", err)
 			}
-			deleted = append(deleted, acl)
+			deleted = append(deleted, username)
 		}
 	}
 
 	// Add remaining ACLs from source
 	for acl := range toAdd {
 		username := strings.Split(acl, " ")[1]
-		slog.Info("Syncing ACL", "username", username)
-		slog.Debug("Syncing ACL", "line", acl)
+		slog.Debug("Syncing ACL", "username", username, "line", acl)
 		command := strings.Split(filterUser.ReplaceAllString(acl, "ACL SETUSER "), " ")
 		commandInterfce := make([]interface{}, len(command))
 		for i, s := range command {
 			commandInterfce[i] = s
 		}
 		if err := destination.Do(context.Background(), commandInterfce...).Err(); err != nil {
-			return deleted, fmt.Errorf("error setting acl: %v", err)
+			return nil, nil, fmt.Errorf("error setting acl: %v", err)
 		}
+		added = append(added, username)
 	}
 
-	return deleted, nil
+	return added, deleted, nil
 }
 
 // Loop loops through the sync interval and syncs the acls

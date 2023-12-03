@@ -180,8 +180,8 @@ func TestMirrorAcls(t *testing.T) {
 			name:            "ACLs synced with deletions",
 			sourceAcls:      []interface{}{"user acl1", "user acl2"},
 			destinationAcls: []interface{}{"user acl1", "user acl3"},
-			expectedDeleted: []string{"user acl3"},
-			expectedAdded:   []string{"user acl2"},
+			expectedDeleted: []string{"acl3"},
+			expectedAdded:   []string{"acl2"},
 			wantErr:         false,
 		},
 		{
@@ -225,12 +225,15 @@ func TestMirrorAcls(t *testing.T) {
 				}
 			}
 
-			deleted, err := mirrorAcls(context.Background(), sourceClient, destinationClient)
+			added, deleted, err := mirrorAcls(context.Background(), sourceClient, destinationClient)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !reflect.DeepEqual(deleted, tt.expectedDeleted) {
 				t.Errorf("mirrorAcls() deleted = %v, expectedDeleted %v", deleted, tt.expectedDeleted)
+			}
+			if !reflect.DeepEqual(added, tt.expectedAdded) {
+				t.Errorf("mirrorAcls() added = %v, expectedAdded %v", deleted, tt.expectedDeleted)
 			}
 		})
 	}
@@ -242,19 +245,19 @@ func TestIsItPrimary(t *testing.T) {
 	tests := []struct {
 		name     string
 		mockResp string
-		want     bool
+		want     int
 		wantErr  bool
 	}{
 		{
 			name:     "parse Primary output",
 			mockResp: primaryOutput,
-			want:     true,
+			want:     Primary,
 			wantErr:  false,
 		},
 		{
 			name:     "parse Follower output",
 			mockResp: followerOutput,
-			want:     false,
+			want:     Follower,
 			wantErr:  false,
 		},
 	}

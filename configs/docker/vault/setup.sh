@@ -36,11 +36,12 @@ setup_vault(){
             max_ttl="1h"
     done
 
-    for i in $(seq 1 10) ; do
-        vault read database/creds/admin-redis0001
-        vault read database/creds/admin-redis0002
-    done
     echo "Vault configuration complete"
+    while true ; do
+        vault read database/creds/admin-redis0001 &
+        vault read database/creds/admin-redis0002 &
+        sleep 3
+    done
 }
 
 setup_vault &

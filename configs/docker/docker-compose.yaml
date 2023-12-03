@@ -15,16 +15,18 @@ services:
     container_name: redis0002
     volumes:
       - ./redis0002:/usr/local/etc/redis:rw
-    command: 
+    command:
       - "redis-server"
       - "/usr/local/etc/redis/redis.conf"
       - "--slaveof"
       - "redis0001"
       - "6379"
-  
+
   bedel_redis0001:
     image: ncode/bedel:dev
     container_name: bedel_redis0001
+    depends_on:
+      - vault
     command:
       - "run"
       - "-a"
@@ -37,6 +39,8 @@ services:
   bedel_redis0002:
     image: ncode/bedel:dev
     container_name: bedel_redis0002
+    depends_on:
+      - vault
     command:
       - "run"
       - "-a"
