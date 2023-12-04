@@ -442,9 +442,6 @@ func TestAclManager_Loop(t *testing.T) {
 			}()
 
 			if tt.name == "follower node" {
-				if tt.wantErr {
-					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
-				}
 				time.Sleep(time.Second * 10)
 			}
 
