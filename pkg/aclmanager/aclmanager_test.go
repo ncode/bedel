@@ -447,6 +447,18 @@ func TestAclManager_Loop(t *testing.T) {
 	}
 }
 
+func TestClose(t *testing.T) {
+	redisClient, _ := redismock.NewClientMock()
+	aclManager := AclManager{RedisClient: redisClient}
+	err := aclManager.Close()
+	assert.NoError(t, err)
+}
+
+func TestClosePanic(t *testing.T) {
+	aclManager := AclManager{RedisClient: nil}
+	assert.Panics(t, func() { aclManager.Close() })
+}
+
 func BenchmarkParseRedisOutputFollower(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := parseRedisOutput(followerOutput)
