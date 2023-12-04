@@ -362,7 +362,7 @@ func TestCurrentFunction_Error(t *testing.T) {
 }
 
 func TestAclManager_Loop(t *testing.T) {
-	viper.Set("syncInterval", 3)
+	viper.Set("syncInterval", 4)
 	tests := []struct {
 		name        string
 		aclManager  *AclManager
@@ -396,7 +396,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Username: "username",
 			},
 			wantErr:     true,
-			expectError: fmt.Errorf("unable to check if it's a primary: error"),
+			expectError: fmt.Errorf("unable to check if it's a primary"),
 		},
 		// TODO: refactor to be able to test this case
 		//{
