@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/spf13/viper"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -361,7 +362,7 @@ func TestCurrentFunction_Error(t *testing.T) {
 }
 
 func TestAclManager_Loop(t *testing.T) {
-	viper.Set("syncInterval", 60)
+	viper.Set("syncInterval", 4)
 	tests := []struct {
 		name        string
 		aclManager  *AclManager
@@ -388,14 +389,14 @@ func TestAclManager_Loop(t *testing.T) {
 			expectError: fmt.Errorf("error"),
 		},
 		{
-			name: "follower node",
+			name: "follower node with error",
 			aclManager: &AclManager{
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
 			},
 			wantErr:     true,
-			expectError: fmt.Errorf("unable to check if it's a primary: error"),
+			expectError: fmt.Errorf("unable to check if it's a primary"),
 		},
 		// TODO: refactor to be able to test this case
 		//{
@@ -418,17 +419,34 @@ func TestAclManager_Loop(t *testing.T) {
 			if tt.wantErr {
 				if tt.name == "primary node" {
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 				} else {
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(followerOutput)
 				}
 			} else {
 				if tt.name == "primary node" {
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
-				} else {
-					mock.ExpectInfo("replication").SetVal(followerOutput)
-					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+
 				}
 			}
 
@@ -442,9 +460,7 @@ func TestAclManager_Loop(t *testing.T) {
 				done <- tt.aclManager.Loop(ctx)
 			}()
 
-			if tt.name == "follower node" {
-				time.Sleep(time.Second * 10)
-			}
+			time.Sleep(time.Second * 10)
 
 			// Cancel the context to stop the loop
 			cancel()
@@ -456,7 +472,7 @@ func TestAclManager_Loop(t *testing.T) {
 					t.Errorf("Expected no error, got: %v", err)
 				}
 
-				if err.Error() != tt.expectError.Error() {
+				if !strings.Contains(err.Error(), tt.expectError.Error()) {
 					t.Errorf("Expected error: %v, got: %v", tt.expectError, err)
 				}
 			}

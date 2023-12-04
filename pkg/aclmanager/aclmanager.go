@@ -257,7 +257,7 @@ func (a *AclManager) Loop(ctx context.Context) (err error) {
 				if err != nil {
 					slog.Warn("unable to sync acls from primary", "message", e)
 				}
-				err = fmt.Errorf("unable to check if it's a primary: %w", e)
+				err = fmt.Errorf("unable to sync acls from primary: %w", e)
 			}
 		}
 	}
