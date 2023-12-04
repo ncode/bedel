@@ -247,16 +247,17 @@ func (a *AclManager) Loop(ctx context.Context) (err error) {
 		case <-ctx.Done():
 			return err
 		case <-ticker.C:
-			function, err := a.CurrentFunction()
+			function, e := a.CurrentFunction()
 			if err != nil {
-				slog.Warn("unable to check if it's a primary", "message", err)
+				slog.Warn("unable to check if it's a primary", "message", e)
+				err = fmt.Errorf("unable to check if it's a primary: %w", e)
 			}
 			if function == Follower {
-				err = a.SyncAcls()
+				e = a.SyncAcls()
 				if err != nil {
-					slog.Warn("unable to sync acls from primary", "message", err)
-					return fmt.Errorf("error syncing acls: %v", err)
+					slog.Warn("unable to sync acls from primary", "message", e)
 				}
+				err = fmt.Errorf("unable to check if it's a primary: %w", e)
 			}
 		}
 	}
