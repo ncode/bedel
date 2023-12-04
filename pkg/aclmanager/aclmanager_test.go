@@ -361,7 +361,7 @@ func TestCurrentFunction_Error(t *testing.T) {
 }
 
 func TestAclManager_Loop(t *testing.T) {
-	viper.Set("syncInterval", 5)
+	viper.Set("syncInterval", 60)
 	tests := []struct {
 		name        string
 		aclManager  *AclManager
