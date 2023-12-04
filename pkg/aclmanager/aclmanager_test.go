@@ -361,7 +361,7 @@ func TestCurrentFunction_Error(t *testing.T) {
 }
 
 func TestAclManager_Loop(t *testing.T) {
-	viper.Set("syncInterval", 1)
+	viper.Set("syncInterval", 5)
 	tests := []struct {
 		name        string
 		aclManager  *AclManager
@@ -395,8 +395,19 @@ func TestAclManager_Loop(t *testing.T) {
 				Username: "username",
 			},
 			wantErr:     true,
-			expectError: fmt.Errorf("error syncing acls"),
+			expectError: fmt.Errorf("unable to check if it's a primary: error"),
 		},
+		// TODO: refactor to be able to test this case
+		//{
+		//	name: "follower node",
+		//	aclManager: &AclManager{
+		//		Addr:     "localhost:6379",
+		//		Password: "password",
+		//		Username: "username",
+		//	},
+		//	wantErr:     false,
+		//	expectError: fmt.Errorf("error syncing acls"),
+		//},
 	}
 
 	for _, tt := range tests {
@@ -404,15 +415,20 @@ func TestAclManager_Loop(t *testing.T) {
 			redisClient, mock := redismock.NewClientMock()
 			tt.aclManager.RedisClient = redisClient
 
-			if tt.wantErr == false {
+			if tt.wantErr {
+				if tt.name == "primary node" {
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+				} else {
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+				}
+			} else {
 				if tt.name == "primary node" {
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 				} else {
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 				}
-			} else {
-				mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 			}
 
 			// Set up a cancellable context to control the loop
@@ -425,7 +441,10 @@ func TestAclManager_Loop(t *testing.T) {
 				done <- tt.aclManager.Loop(ctx)
 			}()
 
-			if tt.wantErr == false && tt.name == "follower node" {
+			if tt.name == "follower node" {
+				if tt.wantErr {
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+				}
 				time.Sleep(time.Second * 10)
 			}
 
