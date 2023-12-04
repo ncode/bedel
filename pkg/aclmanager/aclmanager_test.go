@@ -78,6 +78,12 @@ func TestFindNodes(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name:     "error on replicationInfo",
+			mockResp: followerOutput,
+			want:     nil,
+			wantErr:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -85,7 +91,11 @@ func TestFindNodes(t *testing.T) {
 			redisClient, mock := redismock.NewClientMock()
 
 			// Mocking the response for the Info function
-			mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			if tt.wantErr {
+				mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+			} else {
+				mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			}
 			aclManager := AclManager{RedisClient: redisClient}
 
 			nodes, err := aclManager.FindNodes()
@@ -93,7 +103,6 @@ func TestFindNodes(t *testing.T) {
 				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
 			assert.Equal(t, tt.want, nodes)
 		})
 	}
@@ -277,6 +286,32 @@ func TestIsItPrimary(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.want, nodes)
+		})
+	}
+}
+
+func TestNewAclManager(t *testing.T) {
+	tests := []struct {
+		name string
+		want *AclManager
+	}{
+		{
+			name: "create AclManager",
+			want: &AclManager{
+				Addr:     "localhost:6379",
+				Password: "password",
+				Username: "username",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := New(tt.want.Addr, tt.want.Username, tt.want.Password)
+			assert.Equal(t, tt.want.Addr, got.Addr)
+			assert.Equal(t, tt.want.Username, got.Username)
+			assert.Equal(t, tt.want.Password, got.Password)
+			assert.NotNil(t, got.RedisClient)
 		})
 	}
 }
