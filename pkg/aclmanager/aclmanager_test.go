@@ -3,8 +3,10 @@ package aclmanager
 import (
 	"context"
 	"fmt"
+	"github.com/spf13/viper"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
@@ -356,6 +358,81 @@ func TestCurrentFunction_Error(t *testing.T) {
 
 	_, err := aclManager.CurrentFunction()
 	assert.Error(t, err)
+}
+
+func TestAclManager_Loop(t *testing.T) {
+	viper.Set("syncInterval", 1)
+	tests := []struct {
+		name        string
+		aclManager  *AclManager
+		wantErr     bool
+		expectError error
+	}{
+		{
+			name: "primary node",
+			aclManager: &AclManager{
+				Addr:     "localhost:6379",
+				Password: "password",
+				Username: "username",
+			},
+			wantErr: false,
+		},
+		{
+			name: "follower node",
+			aclManager: &AclManager{
+				Addr:     "localhost:6379",
+				Password: "password",
+				Username: "username",
+			},
+			wantErr:     true,
+			expectError: fmt.Errorf("error syncing acls"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+			tt.aclManager.RedisClient = redisClient
+
+			if tt.wantErr == false {
+				if tt.name == "primary node" {
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+				} else {
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(followerOutput)
+				}
+			}
+
+			// Set up a cancellable context to control the loop
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			// Run Loop in a separate goroutine
+			done := make(chan error, 1)
+			go func() {
+				done <- tt.aclManager.Loop(ctx)
+			}()
+
+			if tt.wantErr == false && tt.name == "follower node" {
+				time.Sleep(time.Second * 10)
+			}
+
+			// Cancel the context to stop the loop
+			cancel()
+
+			// Check for errors
+			err := <-done
+			if err != nil {
+				if !tt.wantErr {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+
+				if err.Error() != tt.expectError.Error() {
+					t.Errorf("Expected error: %v, got: %v", tt.expectError, err)
+				}
+			}
+		})
+	}
 }
 
 func BenchmarkParseRedisOutputFollower(b *testing.B) {
