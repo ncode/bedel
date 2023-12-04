@@ -174,6 +174,15 @@ func TestListAcls(t *testing.T) {
 	}
 }
 
+func TestListAcls_Error(t *testing.T) {
+	redisClient, mock := redismock.NewClientMock()
+
+	// Mocking the response for the ACL LIST command
+	mock.ExpectDo("ACL", "LIST").SetVal([]string{"user acl1", "user acl2"})
+	_, err := listAcls(context.Background(), redisClient)
+	assert.Error(t, err)
+}
+
 func TestMirrorAcls(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -316,7 +325,7 @@ func TestNewAclManager(t *testing.T) {
 	}
 }
 
-func TestCurrentFunctionError(t *testing.T) {
+func TestCurrentFunction_Error(t *testing.T) {
 	redisClient, mock := redismock.NewClientMock()
 
 	// Mocking the response for the Info function
