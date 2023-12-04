@@ -419,6 +419,12 @@ func TestAclManager_Loop(t *testing.T) {
 			if tt.wantErr {
 				if tt.name == "primary node" {
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 				} else {
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 					mock.ExpectInfo("replication").SetVal(followerOutput)
@@ -437,6 +443,10 @@ func TestAclManager_Loop(t *testing.T) {
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+					mock.ExpectInfo("replication").SetVal(primaryOutput)
+
 				}
 			}
 
@@ -450,9 +460,7 @@ func TestAclManager_Loop(t *testing.T) {
 				done <- tt.aclManager.Loop(ctx)
 			}()
 
-			if tt.name == "follower node" {
-				time.Sleep(time.Second * 10)
-			}
+			time.Sleep(time.Second * 10)
 
 			// Cancel the context to stop the loop
 			cancel()
