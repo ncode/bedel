@@ -316,6 +316,17 @@ func TestNewAclManager(t *testing.T) {
 	}
 }
 
+func TestCurrentFunctionError(t *testing.T) {
+	redisClient, mock := redismock.NewClientMock()
+
+	// Mocking the response for the Info function
+	mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+	aclManager := AclManager{RedisClient: redisClient}
+
+	_, err := aclManager.CurrentFunction()
+	assert.Error(t, err)
+}
+
 func BenchmarkParseRedisOutputFollower(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := parseRedisOutput(followerOutput)
