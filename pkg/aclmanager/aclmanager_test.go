@@ -78,6 +78,12 @@ func TestFindNodes(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name:     "error on replicationInfo",
+			mockResp: followerOutput,
+			want:     nil,
+			wantErr:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -85,7 +91,11 @@ func TestFindNodes(t *testing.T) {
 			redisClient, mock := redismock.NewClientMock()
 
 			// Mocking the response for the Info function
-			mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			if tt.wantErr {
+				mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+			} else {
+				mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			}
 			aclManager := AclManager{RedisClient: redisClient}
 
 			nodes, err := aclManager.FindNodes()
@@ -93,7 +103,6 @@ func TestFindNodes(t *testing.T) {
 				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
 			assert.Equal(t, tt.want, nodes)
 		})
 	}
@@ -165,6 +174,15 @@ func TestListAcls(t *testing.T) {
 	}
 }
 
+func TestListAcls_Error(t *testing.T) {
+	redisClient, mock := redismock.NewClientMock()
+
+	// Mocking the response for the ACL LIST command
+	mock.ExpectDo("ACL", "LIST").SetVal([]string{"user acl1", "user acl2"})
+	_, err := listAcls(context.Background(), redisClient)
+	assert.Error(t, err)
+}
+
 func TestMirrorAcls(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -183,6 +201,20 @@ func TestMirrorAcls(t *testing.T) {
 			expectedDeleted: []string{"acl3"},
 			expectedAdded:   []string{"acl2"},
 			wantErr:         false,
+		},
+		{
+			name:            "ACLs synced with Error om SETUSER",
+			sourceAcls:      []interface{}{"user acl1", "user acl2"},
+			destinationAcls: []interface{}{"user acl1", "user acl3"},
+			redisDoError:    fmt.Errorf("DELUSER"),
+			wantErr:         true,
+		},
+		{
+			name:            "ACLs synced with Error on SETUSER",
+			sourceAcls:      []interface{}{"user acl1", "user acl2"},
+			destinationAcls: []interface{}{"user acl1", "user acl3"},
+			redisDoError:    fmt.Errorf("SETUSER"),
+			wantErr:         true,
 		},
 		{
 			name:            "No ACLs to delete",
@@ -215,11 +247,19 @@ func TestMirrorAcls(t *testing.T) {
 				destMock.ExpectDo("ACL", "LIST").SetVal(tt.destinationAcls)
 				if tt.expectedDeleted != nil {
 					for _, acl := range tt.expectedDeleted {
+						if tt.wantErr && tt.redisDoError.Error() == "DELUSER" {
+							destMock.ExpectDo("ACL", "DELUSER", acl).SetErr(tt.redisDoError)
+							continue
+						}
 						destMock.ExpectDo("ACL", "DELUSER", acl).SetVal("OK")
 					}
 				}
 				if tt.expectedAdded != nil {
 					for _, acl := range tt.expectedAdded {
+						if tt.wantErr && tt.redisDoError.Error() == "SETUSER" {
+							destMock.ExpectDo("ACL", "SETUSER", acl).SetErr(tt.redisDoError)
+							continue
+						}
 						destMock.ExpectDo("ACL", "SETUSER", acl).SetVal("OK")
 					}
 				}
@@ -279,6 +319,43 @@ func TestIsItPrimary(t *testing.T) {
 			assert.Equal(t, tt.want, nodes)
 		})
 	}
+}
+
+func TestNewAclManager(t *testing.T) {
+	tests := []struct {
+		name string
+		want *AclManager
+	}{
+		{
+			name: "create AclManager",
+			want: &AclManager{
+				Addr:     "localhost:6379",
+				Password: "password",
+				Username: "username",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := New(tt.want.Addr, tt.want.Username, tt.want.Password)
+			assert.Equal(t, tt.want.Addr, got.Addr)
+			assert.Equal(t, tt.want.Username, got.Username)
+			assert.Equal(t, tt.want.Password, got.Password)
+			assert.NotNil(t, got.RedisClient)
+		})
+	}
+}
+
+func TestCurrentFunction_Error(t *testing.T) {
+	redisClient, mock := redismock.NewClientMock()
+
+	// Mocking the response for the Info function
+	mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+	aclManager := AclManager{RedisClient: redisClient}
+
+	_, err := aclManager.CurrentFunction()
+	assert.Error(t, err)
 }
 
 func BenchmarkParseRedisOutputFollower(b *testing.B) {
