@@ -378,6 +378,16 @@ func TestAclManager_Loop(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "primary node with error",
+			aclManager: &AclManager{
+				Addr:     "localhost:6379",
+				Password: "password",
+				Username: "username",
+			},
+			wantErr:     true,
+			expectError: fmt.Errorf("error"),
+		},
+		{
 			name: "follower node",
 			aclManager: &AclManager{
 				Addr:     "localhost:6379",
@@ -401,6 +411,8 @@ func TestAclManager_Loop(t *testing.T) {
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 				}
+			} else {
+				mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 			}
 
 			// Set up a cancellable context to control the loop
