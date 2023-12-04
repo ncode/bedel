@@ -420,6 +420,7 @@ func TestAclManager_Loop(t *testing.T) {
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 				} else {
 					mock.ExpectInfo("replication").SetVal(followerOutput)
+					mock.ExpectInfo("replication").SetVal(followerOutput)
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 				}
 			} else {
