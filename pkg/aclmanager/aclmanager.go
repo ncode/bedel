@@ -16,6 +16,7 @@ import (
 const (
 	Primary = iota
 	Follower
+	Unknown
 )
 
 var (
@@ -101,13 +102,12 @@ func (a *AclManager) findNodes(ctx context.Context) (err error) {
 // CurrentFunction check if the current node is the Primary node
 func (a *AclManager) CurrentFunction(ctx context.Context) (function int, err error) {
 	slog.Debug("Check node current function")
-	replicationInfo, err := a.RedisClient.Info(ctx, "replication").Result()
+	err = a.findNodes(ctx)
 	if err != nil {
-		return function, err
+		return Unknown, err
 	}
-
-	if role.MatchString(replicationInfo) {
-		return Primary, nil
+	if a.primary.Load() {
+		return Primary, err
 	}
 
 	return Follower, err

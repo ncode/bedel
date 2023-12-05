@@ -310,10 +310,11 @@ func TestIsItPrimary(t *testing.T) {
 	// Sample Primary and Follower output for testing
 
 	tests := []struct {
-		name     string
-		mockResp string
-		want     int
-		wantErr  bool
+		name                 string
+		mockResp             string
+		want                 int
+		wantErr              bool
+		RedisExpectInfoError error
 	}{
 		{
 			name:     "parse Primary output",
@@ -327,6 +328,13 @@ func TestIsItPrimary(t *testing.T) {
 			want:     Follower,
 			wantErr:  false,
 		},
+		{
+			name:                 "parse primary error",
+			mockResp:             primaryOutput,
+			want:                 Primary,
+			wantErr:              true,
+			RedisExpectInfoError: fmt.Errorf("asasas"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -334,13 +342,19 @@ func TestIsItPrimary(t *testing.T) {
 			redisClient, mock := redismock.NewClientMock()
 
 			// Mocking the response for the Info function
-			mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			if tt.wantErr {
+				mock.ExpectInfo("replication").SetErr(tt.RedisExpectInfoError)
+			} else {
+				mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			}
 			aclManager := AclManager{RedisClient: redisClient}
 			ctx := context.Background()
 			nodes, err := aclManager.CurrentFunction(ctx)
 			if (err != nil) != tt.wantErr {
+				if strings.Contains(err.Error(), tt.RedisExpectInfoError.Error()) {
+					return
+				}
 				t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
-				return
 			}
 
 			assert.Equal(t, tt.want, nodes)
@@ -384,6 +398,62 @@ func TestCurrentFunction_Error(t *testing.T) {
 
 	_, err := aclManager.CurrentFunction(ctx)
 	assert.Error(t, err)
+}
+
+func TestAclManager_Primary(t *testing.T) {
+	tests := []struct {
+		name     string
+		mockResp string
+		want     string
+		wantErr  bool
+	}{
+		{
+			name:     "parse master output",
+			mockResp: primaryOutput,
+			wantErr:  false,
+		},
+		{
+			name:     "parse Follower output",
+			mockResp: followerOutput,
+			want:     "172.21.0.2:6379",
+			wantErr:  false,
+		},
+		{
+			name:     "error on replicationInfo",
+			mockResp: followerOutput,
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+
+			// Mocking the response for the Info function
+			if tt.wantErr {
+				mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+			} else {
+				mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			}
+			aclManager := AclManager{RedisClient: redisClient}
+			ctx := context.Background()
+
+			primary, err := aclManager.Primary(ctx)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, primary)
+			} else {
+				assert.NoError(t, err)
+				if tt.want == "" {
+					assert.Nil(t, primary)
+					return
+				}
+				assert.NotNil(t, primary)
+				assert.Equal(t, tt.want, primary.Addr)
+			}
+		})
+	}
 }
 
 func TestAclManager_Loop(t *testing.T) {
