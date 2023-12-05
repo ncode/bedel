@@ -190,14 +190,15 @@ func TestListAcls_Error(t *testing.T) {
 
 func TestMirrorAcls(t *testing.T) {
 	tests := []struct {
-		name            string
-		sourceAcls      []interface{}
-		destinationAcls []interface{}
-		expectedDeleted []string
-		expectedAdded   []string
-		listAclsError   error
-		redisDoError    error
-		wantErr         bool
+		name               string
+		sourceAcls         []interface{}
+		destinationAcls    []interface{}
+		expectedDeleted    []string
+		expectedAdded      []string
+		listAclsError      error
+		redisDoError       error
+		wantSourceErr      bool
+		wantDestinationErr bool
 	}{
 		{
 			name:            "ACLs synced with deletions",
@@ -205,33 +206,34 @@ func TestMirrorAcls(t *testing.T) {
 			destinationAcls: []interface{}{"user acl1", "user acl3"},
 			expectedDeleted: []string{"acl3"},
 			expectedAdded:   []string{"acl2"},
-			wantErr:         false,
+			wantSourceErr:   false,
 		},
 		{
-			name:            "ACLs synced with Error om SETUSER",
-			sourceAcls:      []interface{}{"user acl1", "user acl2"},
-			destinationAcls: []interface{}{"user acl1", "user acl3"},
-			redisDoError:    fmt.Errorf("DELUSER"),
-			wantErr:         true,
+			name:               "ACLs synced with Error om SETUSER",
+			sourceAcls:         []interface{}{"user acl1", "user acl2"},
+			destinationAcls:    []interface{}{"user acl1", "user acl3"},
+			redisDoError:       fmt.Errorf("DELUSER"),
+			wantDestinationErr: true,
 		},
 		{
-			name:            "ACLs synced with Error on SETUSER",
-			sourceAcls:      []interface{}{"user acl1", "user acl2"},
-			destinationAcls: []interface{}{"user acl1", "user acl3"},
-			redisDoError:    fmt.Errorf("SETUSER"),
-			wantErr:         true,
+			name:               "ACLs synced with Error on SETUSER",
+			sourceAcls:         []interface{}{"user acl1", "user acl2"},
+			destinationAcls:    []interface{}{"user acl1", "user acl3"},
+			redisDoError:       fmt.Errorf("SETUSER"),
+			wantSourceErr:      false,
+			wantDestinationErr: true,
 		},
 		{
 			name:            "No ACLs to delete",
 			sourceAcls:      []interface{}{"user acl1", "user acl2"},
 			destinationAcls: []interface{}{"user acl1", "user acl2"},
 			expectedDeleted: nil,
-			wantErr:         false,
+			wantSourceErr:   false,
 		},
 		{
 			name:          "Error listing source ACLs",
 			listAclsError: fmt.Errorf("error listing source ACLs"),
-			wantErr:       true,
+			wantSourceErr: true,
 		},
 	}
 
@@ -240,39 +242,54 @@ func TestMirrorAcls(t *testing.T) {
 			sourceClient, sourceMock := redismock.NewClientMock()
 			destinationClient, destMock := redismock.NewClientMock()
 
-			if tt.listAclsError != nil {
+			if tt.listAclsError != nil && tt.wantSourceErr {
 				sourceMock.ExpectDo("ACL", "LIST").SetErr(tt.listAclsError)
 			} else {
 				sourceMock.ExpectDo("ACL", "LIST").SetVal(tt.sourceAcls)
 			}
 
-			if tt.listAclsError != nil {
+			if tt.listAclsError != nil && tt.wantDestinationErr {
 				destMock.ExpectDo("ACL", "LIST").SetErr(tt.listAclsError)
 			} else {
 				destMock.ExpectDo("ACL", "LIST").SetVal(tt.destinationAcls)
 				if tt.expectedDeleted != nil {
-					for _, acl := range tt.expectedDeleted {
-						if tt.wantErr && tt.redisDoError.Error() == "DELUSER" {
-							destMock.ExpectDo("ACL", "DELUSER", acl).SetErr(tt.redisDoError)
+					for _, username := range tt.expectedDeleted {
+						if tt.wantDestinationErr && tt.redisDoError.Error() == "DELUSER" {
+							destMock.ExpectDo("ACL", "DELUSER", username).SetErr(tt.redisDoError)
 							continue
 						}
-						destMock.ExpectDo("ACL", "DELUSER", acl).SetVal("OK")
+						destMock.ExpectDo("ACL", "DELUSER", username).SetVal("OK")
 					}
 				}
 				if tt.expectedAdded != nil {
-					for _, acl := range tt.expectedAdded {
-						if tt.wantErr && tt.redisDoError.Error() == "SETUSER" {
-							destMock.ExpectDo("ACL", "SETUSER", acl).SetErr(tt.redisDoError)
+					for _, username := range tt.expectedAdded {
+						if tt.wantDestinationErr && tt.redisDoError.Error() == "SETUSER" {
+							destMock.ExpectDo("ACL", "SETUSER", username).SetErr(tt.redisDoError)
 							continue
 						}
-						destMock.ExpectDo("ACL", "SETUSER", acl).SetVal("OK")
+						destMock.ExpectDo("ACL", "SETUSER", username).SetVal("OK")
 					}
 				}
 			}
 
 			added, deleted, err := mirrorAcls(context.Background(), sourceClient, destinationClient)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.wantErr)
+			if err != nil {
+				if tt.wantSourceErr {
+					if tt.listAclsError != nil && !strings.Contains(err.Error(), tt.listAclsError.Error()) {
+						t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.listAclsError)
+					}
+					if tt.redisDoError != nil && !strings.Contains(err.Error(), tt.redisDoError.Error()) {
+						t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.redisDoError)
+					}
+				}
+				if !tt.wantDestinationErr {
+					if tt.listAclsError != nil && !strings.Contains(err.Error(), tt.listAclsError.Error()) {
+						t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.listAclsError)
+					}
+					if tt.redisDoError != nil && !strings.Contains(err.Error(), tt.redisDoError.Error()) {
+						t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.redisDoError)
+					}
+				}
 			}
 			if !reflect.DeepEqual(deleted, tt.expectedDeleted) {
 				t.Errorf("mirrorAcls() deleted = %v, expectedDeleted %v", deleted, tt.expectedDeleted)
