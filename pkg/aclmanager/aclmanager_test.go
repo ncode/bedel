@@ -235,6 +235,11 @@ func TestMirrorAcls(t *testing.T) {
 			listAclsError: fmt.Errorf("error listing source ACLs"),
 			wantSourceErr: true,
 		},
+		{
+			name:               "Error listing destination ACLs",
+			listAclsError:      fmt.Errorf("error listing destination ACLs"),
+			wantDestinationErr: true,
+		},
 	}
 
 	for _, tt := range tests {
