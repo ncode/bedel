@@ -56,28 +56,23 @@ func TestFindNodes(t *testing.T) {
 	tests := []struct {
 		name     string
 		mockResp string
-		want     []NodeInfo
+		want     map[string]int
 		wantErr  bool
+		nodes    map[string]int
 	}{
 		{
 			name:     "parse master output",
 			mockResp: primaryOutput,
-			want: []NodeInfo{
-				{
-					Address:  "172.21.0.3:6379",
-					Function: Follower,
-				},
+			want: map[string]int{
+				"172.21.0.3:6379": Follower,
 			},
 			wantErr: false,
 		},
 		{
 			name:     "parse Follower output",
 			mockResp: followerOutput,
-			want: []NodeInfo{
-				{
-					Address:  "172.21.0.2:6379",
-					Function: Primary,
-				},
+			want: map[string]int{
+				"172.21.0.2:6379": Primary,
 			},
 			wantErr: false,
 		},
@@ -86,6 +81,20 @@ func TestFindNodes(t *testing.T) {
 			mockResp: followerOutput,
 			want:     nil,
 			wantErr:  true,
+		},
+		{
+			name:     "ensure old nodes are removed",
+			mockResp: primaryOutput,
+			want: map[string]int{
+				"172.21.0.3:6379": Follower,
+			},
+			wantErr: false,
+			nodes: map[string]int{
+				"192.168.0.1:6379": Follower,
+				"192.168.0.2:6379": Follower,
+				"192.168.0.3:6379": Follower,
+				"192.168.0.4:6379": Follower,
+			},
 		},
 	}
 
@@ -99,14 +108,30 @@ func TestFindNodes(t *testing.T) {
 			} else {
 				mock.ExpectInfo("replication").SetVal(tt.mockResp)
 			}
-			aclManager := AclManager{RedisClient: redisClient}
+			aclManager := AclManager{RedisClient: redisClient, nodes: make(map[string]int)}
+			ctx := context.Background()
 
-			nodes, err := aclManager.FindNodes()
+			err := aclManager.findNodes(ctx)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			assert.Equal(t, tt.want, nodes)
+			if tt.name == "ensure old nodes are removed" {
+				for address, _ := range aclManager.nodes {
+					if _, ok := tt.nodes[address]; ok {
+						t.Errorf("findNodes() address %v shound not be found", address)
+					}
+				}
+			}
+			for address, function := range aclManager.nodes {
+				if wantFunction, ok := tt.want[address]; ok {
+					if wantFunction != function {
+						t.Errorf("findNodes() wanted function %v not found", function)
+					}
+					return
+				}
+				t.Errorf("findNodes() wanted address %v not found", address)
+			}
 		})
 	}
 }
@@ -188,14 +213,15 @@ func TestListAcls_Error(t *testing.T) {
 
 func TestMirrorAcls(t *testing.T) {
 	tests := []struct {
-		name            string
-		sourceAcls      []interface{}
-		destinationAcls []interface{}
-		expectedDeleted []string
-		expectedAdded   []string
-		listAclsError   error
-		redisDoError    error
-		wantErr         bool
+		name               string
+		sourceAcls         []interface{}
+		destinationAcls    []interface{}
+		expectedDeleted    []string
+		expectedAdded      []string
+		listAclsError      error
+		redisDoError       error
+		wantSourceErr      bool
+		wantDestinationErr bool
 	}{
 		{
 			name:            "ACLs synced with deletions",
@@ -203,74 +229,110 @@ func TestMirrorAcls(t *testing.T) {
 			destinationAcls: []interface{}{"user acl1", "user acl3"},
 			expectedDeleted: []string{"acl3"},
 			expectedAdded:   []string{"acl2"},
-			wantErr:         false,
+			wantSourceErr:   false,
 		},
 		{
-			name:            "ACLs synced with Error om SETUSER",
-			sourceAcls:      []interface{}{"user acl1", "user acl2"},
-			destinationAcls: []interface{}{"user acl1", "user acl3"},
-			redisDoError:    fmt.Errorf("DELUSER"),
-			wantErr:         true,
+			name:               "ACLs synced with Error om SETUSER",
+			sourceAcls:         []interface{}{"user acl1", "user acl2"},
+			destinationAcls:    []interface{}{"user acl1", "user acl3"},
+			redisDoError:       fmt.Errorf("DELUSER"),
+			wantDestinationErr: true,
 		},
 		{
-			name:            "ACLs synced with Error on SETUSER",
-			sourceAcls:      []interface{}{"user acl1", "user acl2"},
-			destinationAcls: []interface{}{"user acl1", "user acl3"},
-			redisDoError:    fmt.Errorf("SETUSER"),
-			wantErr:         true,
+			name:               "ACLs synced with Error on SETUSER",
+			sourceAcls:         []interface{}{"user acl1", "user acl2"},
+			destinationAcls:    []interface{}{"user acl1", "user acl3"},
+			redisDoError:       fmt.Errorf("SETUSER"),
+			wantSourceErr:      false,
+			wantDestinationErr: true,
 		},
 		{
 			name:            "No ACLs to delete",
 			sourceAcls:      []interface{}{"user acl1", "user acl2"},
 			destinationAcls: []interface{}{"user acl1", "user acl2"},
 			expectedDeleted: nil,
-			wantErr:         false,
+			wantSourceErr:   false,
 		},
 		{
 			name:          "Error listing source ACLs",
 			listAclsError: fmt.Errorf("error listing source ACLs"),
-			wantErr:       true,
+			wantSourceErr: true,
+		},
+		{
+			name:               "Error listing destination ACLs",
+			listAclsError:      fmt.Errorf("error listing destination ACLs"),
+			wantDestinationErr: true,
+		},
+		{
+			name:          "Invalid aclManagerPrimary",
+			listAclsError: fmt.Errorf("error listing destination ACLs"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sourceClient, sourceMock := redismock.NewClientMock()
-			destinationClient, destMock := redismock.NewClientMock()
+			primaryClient, sourceMock := redismock.NewClientMock()
+			followerClient, destMock := redismock.NewClientMock()
 
-			if tt.listAclsError != nil {
+			aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int)}
+			aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int)}
+
+			if tt.name == "Invalid aclManagerPrimary" {
+				aclManagerPrimary = nil
+				_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+				assert.Error(t, err)
+				assert.Equal(t, "no primary found", err.Error())
+				return
+			}
+
+			if tt.listAclsError != nil && tt.wantSourceErr {
 				sourceMock.ExpectDo("ACL", "LIST").SetErr(tt.listAclsError)
 			} else {
 				sourceMock.ExpectDo("ACL", "LIST").SetVal(tt.sourceAcls)
 			}
 
-			if tt.listAclsError != nil {
+			if tt.listAclsError != nil && tt.wantDestinationErr {
 				destMock.ExpectDo("ACL", "LIST").SetErr(tt.listAclsError)
 			} else {
 				destMock.ExpectDo("ACL", "LIST").SetVal(tt.destinationAcls)
 				if tt.expectedDeleted != nil {
-					for _, acl := range tt.expectedDeleted {
-						if tt.wantErr && tt.redisDoError.Error() == "DELUSER" {
-							destMock.ExpectDo("ACL", "DELUSER", acl).SetErr(tt.redisDoError)
+					for _, username := range tt.expectedDeleted {
+						if tt.wantDestinationErr && tt.redisDoError.Error() == "DELUSER" {
+							destMock.ExpectDo("ACL", "DELUSER", username).SetErr(tt.redisDoError)
 							continue
 						}
-						destMock.ExpectDo("ACL", "DELUSER", acl).SetVal("OK")
+						destMock.ExpectDo("ACL", "DELUSER", username).SetVal("OK")
 					}
 				}
 				if tt.expectedAdded != nil {
-					for _, acl := range tt.expectedAdded {
-						if tt.wantErr && tt.redisDoError.Error() == "SETUSER" {
-							destMock.ExpectDo("ACL", "SETUSER", acl).SetErr(tt.redisDoError)
+					for _, username := range tt.expectedAdded {
+						if tt.wantDestinationErr && tt.redisDoError.Error() == "SETUSER" {
+							destMock.ExpectDo("ACL", "SETUSER", username).SetErr(tt.redisDoError)
 							continue
 						}
-						destMock.ExpectDo("ACL", "SETUSER", acl).SetVal("OK")
+						destMock.ExpectDo("ACL", "SETUSER", username).SetVal("OK")
 					}
 				}
 			}
 
-			added, deleted, err := mirrorAcls(context.Background(), sourceClient, destinationClient)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.wantErr)
+			added, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+			if err != nil {
+				if tt.wantSourceErr {
+					if tt.listAclsError != nil && !strings.Contains(err.Error(), tt.listAclsError.Error()) {
+						t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.listAclsError)
+					}
+					if tt.redisDoError != nil && !strings.Contains(err.Error(), tt.redisDoError.Error()) {
+						t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.redisDoError)
+					}
+				}
+				if !tt.wantDestinationErr {
+					if tt.listAclsError != nil && !strings.Contains(err.Error(), tt.listAclsError.Error()) {
+						t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.listAclsError)
+					}
+					if tt.redisDoError != nil && !strings.Contains(err.Error(), tt.redisDoError.Error()) {
+						t.Errorf("mirrorAcls() error = %v, wantErr %v", err, tt.redisDoError)
+					}
+				}
 			}
 			if !reflect.DeepEqual(deleted, tt.expectedDeleted) {
 				t.Errorf("mirrorAcls() deleted = %v, expectedDeleted %v", deleted, tt.expectedDeleted)
@@ -282,14 +344,13 @@ func TestMirrorAcls(t *testing.T) {
 	}
 }
 
-func TestIsItPrimary(t *testing.T) {
-	// Sample Primary and Follower output for testing
-
+func TestCurrentFunction(t *testing.T) {
 	tests := []struct {
-		name     string
-		mockResp string
-		want     int
-		wantErr  bool
+		name                 string
+		mockResp             string
+		want                 int
+		wantErr              bool
+		RedisExpectInfoError error
 	}{
 		{
 			name:     "parse Primary output",
@@ -303,6 +364,13 @@ func TestIsItPrimary(t *testing.T) {
 			want:     Follower,
 			wantErr:  false,
 		},
+		{
+			name:                 "parse primary error",
+			mockResp:             primaryOutput,
+			want:                 Unknown,
+			wantErr:              true,
+			RedisExpectInfoError: fmt.Errorf("error"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -310,13 +378,19 @@ func TestIsItPrimary(t *testing.T) {
 			redisClient, mock := redismock.NewClientMock()
 
 			// Mocking the response for the Info function
-			mock.ExpectInfo("replication").SetVal(tt.mockResp)
-			aclManager := AclManager{RedisClient: redisClient}
-
-			nodes, err := aclManager.CurrentFunction()
+			if tt.wantErr {
+				mock.ExpectInfo("replication").SetErr(tt.RedisExpectInfoError)
+			} else {
+				mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			}
+			aclManager := AclManager{RedisClient: redisClient, nodes: make(map[string]int)}
+			ctx := context.Background()
+			nodes, err := aclManager.CurrentFunction(ctx)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
-				return
+				if !strings.Contains(err.Error(), tt.RedisExpectInfoError.Error()) {
+					t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
+					return
+				}
 			}
 
 			assert.Equal(t, tt.want, nodes)
@@ -356,9 +430,77 @@ func TestCurrentFunction_Error(t *testing.T) {
 	// Mocking the response for the Info function
 	mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 	aclManager := AclManager{RedisClient: redisClient}
+	ctx := context.Background()
 
-	_, err := aclManager.CurrentFunction()
+	_, err := aclManager.CurrentFunction(ctx)
 	assert.Error(t, err)
+}
+
+func TestAclManager_Primary(t *testing.T) {
+	tests := []struct {
+		name     string
+		mockResp string
+		want     string
+		wantErr  bool
+	}{
+		{
+			name:     "parse master output",
+			mockResp: primaryOutput,
+			wantErr:  false,
+		},
+		{
+			name:     "parse Follower output",
+			mockResp: followerOutput,
+			want:     "172.21.0.2:6379",
+			wantErr:  false,
+		},
+		{
+			name:     "error on replicationInfo",
+			mockResp: followerOutput,
+			wantErr:  true,
+		},
+		{
+			name:     "username and password",
+			mockResp: followerOutput,
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+
+			// Mocking the response for the Info function
+			if tt.wantErr {
+				mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
+			} else {
+				mock.ExpectInfo("replication").SetVal(tt.mockResp)
+			}
+			aclManager := AclManager{RedisClient: redisClient, Username: "username", Password: "password", nodes: make(map[string]int)}
+			ctx := context.Background()
+
+			primary, err := aclManager.Primary(ctx)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, primary)
+				return
+			}
+
+			if tt.name == "username and password" {
+				assert.Equal(t, aclManager.Username, primary.Username)
+				assert.Equal(t, aclManager.Password, primary.Password)
+				return
+			}
+
+			assert.NoError(t, err)
+			if tt.want == "" {
+				assert.Nil(t, primary)
+				return
+			}
+			assert.NotNil(t, primary)
+			assert.Equal(t, tt.want, primary.Addr)
+		})
+	}
 }
 
 func TestAclManager_Loop(t *testing.T) {
@@ -370,20 +512,22 @@ func TestAclManager_Loop(t *testing.T) {
 		expectError error
 	}{
 		{
-			name: "primary node",
+			name: "Primary node",
 			aclManager: &AclManager{
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				nodes:    make(map[string]int),
 			},
 			wantErr: false,
 		},
 		{
-			name: "primary node with error",
+			name: "Primary node with error",
 			aclManager: &AclManager{
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				nodes:    make(map[string]int),
 			},
 			wantErr:     true,
 			expectError: fmt.Errorf("error"),
@@ -394,21 +538,22 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				nodes:    make(map[string]int),
 			},
 			wantErr:     true,
-			expectError: fmt.Errorf("unable to check if it's a primary"),
+			expectError: fmt.Errorf("unable to check if it's a Primary"),
 		},
-		// TODO: refactor to be able to test this case
-		//{
-		//	name: "follower node",
-		//	aclManager: &AclManager{
-		//		Addr:     "localhost:6379",
-		//		Password: "password",
-		//		Username: "username",
-		//	},
-		//	wantErr:     false,
-		//	expectError: fmt.Errorf("error syncing acls"),
-		//},
+		{
+			name: "follower node",
+			aclManager: &AclManager{
+				Addr:     "localhost:6379",
+				Password: "password",
+				Username: "username",
+				nodes:    make(map[string]int),
+			},
+			wantErr:     false,
+			expectError: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -417,7 +562,7 @@ func TestAclManager_Loop(t *testing.T) {
 			tt.aclManager.RedisClient = redisClient
 
 			if tt.wantErr {
-				if tt.name == "primary node" {
+				if tt.name == "Primary node" {
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
@@ -438,7 +583,7 @@ func TestAclManager_Loop(t *testing.T) {
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 				}
 			} else {
-				if tt.name == "primary node" {
+				if tt.name == "Primary node" {
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
@@ -446,7 +591,6 @@ func TestAclManager_Loop(t *testing.T) {
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
-
 				}
 			}
 
@@ -492,20 +636,20 @@ func TestClosePanic(t *testing.T) {
 	assert.Panics(t, func() { aclManager.Close() })
 }
 
-func BenchmarkParseRedisOutputFollower(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_, err := parseRedisOutput(followerOutput)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkParseRedisOutputMaster(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_, err := parseRedisOutput(primaryOutput)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
+//func BenchmarkParseRedisOutputFollower(b *testing.B) {
+//	for i := 0; i < b.N; i++ {
+//		_, err := parseRedisOutput(followerOutput)
+//		if err != nil {
+//			b.Fatal(err)
+//		}
+//	}
+//}
+//
+//func BenchmarkParseRedisOutputMaster(b *testing.B) {
+//	for i := 0; i < b.N; i++ {
+//		_, err := parseRedisOutput(primaryOutput)
+//		if err != nil {
+//			b.Fatal(err)
+//		}
+//	}
+//}
