@@ -49,6 +49,7 @@ func New(addr string, username string, password string) *AclManager {
 		Username:    username,
 		Password:    password,
 		RedisClient: redisClient,
+		nodes:       make(map[string]int),
 	}
 }
 
@@ -77,12 +78,14 @@ func (a *AclManager) findNodes(ctx context.Context) (err error) {
 		if matches := primaryPortRegex.FindStringSubmatch(line); matches != nil {
 			masterPort = matches[1]
 			nodes = append(nodes, fmt.Sprintf("%s:%s", masterHost, masterPort))
+			a.nodes[fmt.Sprintf("%s:%s", masterHost, masterPort)] = Primary
 		}
 
 		if matches := followerRegex.FindStringSubmatch(line); matches != nil {
 			ip := matches[followerRegex.SubexpIndex("ip")]
 			port := matches[followerRegex.SubexpIndex("port")]
 			nodes = append(nodes, fmt.Sprintf("%s:%s", ip, port))
+			a.nodes[fmt.Sprintf("%s:%s", ip, port)] = Follower
 		}
 	}
 

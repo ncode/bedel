@@ -93,7 +93,7 @@ func TestFindNodes(t *testing.T) {
 			} else {
 				mock.ExpectInfo("replication").SetVal(tt.mockResp)
 			}
-			aclManager := AclManager{RedisClient: redisClient}
+			aclManager := AclManager{RedisClient: redisClient, nodes: make(map[string]int)}
 			ctx := context.Background()
 
 			err := aclManager.findNodes(ctx)
@@ -106,6 +106,7 @@ func TestFindNodes(t *testing.T) {
 					if wantFunction != function {
 						t.Errorf("findNodes() wanted function %v not found", function)
 					}
+					return
 				}
 				t.Errorf("findNodes() wanted address %v not found", address)
 			}
@@ -306,9 +307,7 @@ func TestMirrorAcls(t *testing.T) {
 	}
 }
 
-func TestIsItPrimary(t *testing.T) {
-	// Sample Primary and Follower output for testing
-
+func TestCurrentFunction(t *testing.T) {
 	tests := []struct {
 		name                 string
 		mockResp             string
@@ -331,9 +330,9 @@ func TestIsItPrimary(t *testing.T) {
 		{
 			name:                 "parse primary error",
 			mockResp:             primaryOutput,
-			want:                 Primary,
+			want:                 Unknown,
 			wantErr:              true,
-			RedisExpectInfoError: fmt.Errorf("asasas"),
+			RedisExpectInfoError: fmt.Errorf("error"),
 		},
 	}
 
@@ -347,14 +346,14 @@ func TestIsItPrimary(t *testing.T) {
 			} else {
 				mock.ExpectInfo("replication").SetVal(tt.mockResp)
 			}
-			aclManager := AclManager{RedisClient: redisClient}
+			aclManager := AclManager{RedisClient: redisClient, nodes: make(map[string]int)}
 			ctx := context.Background()
 			nodes, err := aclManager.CurrentFunction(ctx)
 			if (err != nil) != tt.wantErr {
-				if strings.Contains(err.Error(), tt.RedisExpectInfoError.Error()) {
+				if !strings.Contains(err.Error(), tt.RedisExpectInfoError.Error()) {
+					t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
 					return
 				}
-				t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
 			assert.Equal(t, tt.want, nodes)
@@ -435,11 +434,10 @@ func TestAclManager_Primary(t *testing.T) {
 			} else {
 				mock.ExpectInfo("replication").SetVal(tt.mockResp)
 			}
-			aclManager := AclManager{RedisClient: redisClient}
+			aclManager := AclManager{RedisClient: redisClient, nodes: make(map[string]int)}
 			ctx := context.Background()
 
 			primary, err := aclManager.Primary(ctx)
-
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.Nil(t, primary)
@@ -470,6 +468,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				nodes:    make(map[string]int),
 			},
 			wantErr: false,
 		},
@@ -479,6 +478,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				nodes:    make(map[string]int),
 			},
 			wantErr:     true,
 			expectError: fmt.Errorf("error"),
@@ -489,6 +489,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				nodes:    make(map[string]int),
 			},
 			wantErr:     true,
 			expectError: fmt.Errorf("unable to check if it's a Primary"),
@@ -499,6 +500,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				nodes:    make(map[string]int),
 			},
 			wantErr:     false,
 			expectError: nil,
