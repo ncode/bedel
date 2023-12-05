@@ -58,6 +58,7 @@ func TestFindNodes(t *testing.T) {
 		mockResp string
 		want     map[string]int
 		wantErr  bool
+		nodes    map[string]int
 	}{
 		{
 			name:     "parse master output",
@@ -81,6 +82,20 @@ func TestFindNodes(t *testing.T) {
 			want:     nil,
 			wantErr:  true,
 		},
+		{
+			name:     "ensure old nodes are removed",
+			mockResp: primaryOutput,
+			want: map[string]int{
+				"172.21.0.3:6379": Follower,
+			},
+			wantErr: false,
+			nodes: map[string]int{
+				"192.168.0.1:6379": Follower,
+				"192.168.0.2:6379": Follower,
+				"192.168.0.3:6379": Follower,
+				"192.168.0.4:6379": Follower,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -100,6 +115,13 @@ func TestFindNodes(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
 				return
+			}
+			if tt.name == "ensure old nodes are removed" {
+				for address, _ := range aclManager.nodes {
+					if _, ok := tt.nodes[address]; ok {
+						t.Errorf("findNodes() address %v shound not be found", address)
+					}
+				}
 			}
 			for address, function := range aclManager.nodes {
 				if wantFunction, ok := tt.want[address]; ok {
