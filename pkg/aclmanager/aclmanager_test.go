@@ -456,22 +456,25 @@ func TestAclManager_Primary(t *testing.T) {
 			} else {
 				mock.ExpectInfo("replication").SetVal(tt.mockResp)
 			}
-			aclManager := AclManager{RedisClient: redisClient, nodes: make(map[string]int)}
+			aclManager := AclManager{RedisClient: redisClient, Username: "username", Password: "password", nodes: make(map[string]int)}
 			ctx := context.Background()
 
 			primary, err := aclManager.Primary(ctx)
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.Nil(t, primary)
-			} else {
-				assert.NoError(t, err)
-				if tt.want == "" {
-					assert.Nil(t, primary)
-					return
-				}
-				assert.NotNil(t, primary)
-				assert.Equal(t, tt.want, primary.Addr)
+				return
 			}
+
+			assert.NoError(t, err)
+			if tt.want == "" {
+				assert.Nil(t, primary)
+				return
+			}
+			assert.NotNil(t, primary)
+			assert.Equal(t, tt.want, primary.Addr)
+			assert.Equal(t, aclManager.Username, primary.Username)
+			assert.Equal(t, aclManager.Password, primary.Password)
 		})
 	}
 }

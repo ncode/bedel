@@ -124,7 +124,7 @@ func (a *AclManager) Primary(ctx context.Context) (primary *AclManager, err erro
 
 	for address, function := range a.nodes {
 		if function == Primary {
-			return New(address, a.Username, a.Username), err
+			return New(address, a.Username, a.Password), err
 		}
 	}
 
@@ -247,8 +247,8 @@ func (a *AclManager) Loop(ctx context.Context) (err error) {
 		case <-ticker.C:
 			function, e := a.CurrentFunction(ctx)
 			if err != nil {
-				slog.Warn("unable to check if it's a Primary", "message", e)
-				err = fmt.Errorf("unable to check if it's a Primary: %w", e)
+				slog.Warn("unable to check if it's a Primary", "message", err)
+				err = fmt.Errorf("unable to check if it's a Primary: %w", err)
 			}
 			if function == Follower {
 				primary, err = a.Primary(ctx)
@@ -259,8 +259,8 @@ func (a *AclManager) Loop(ctx context.Context) (err error) {
 				var added, deleted []string
 				added, deleted, err = a.SyncAcls(ctx, primary)
 				if err != nil {
-					slog.Warn("unable to sync acls from Primary", "message", e)
-					err = fmt.Errorf("unable to sync acls from Primary: %w", e)
+					slog.Warn("unable to sync acls from Primary", "message", err)
+					err = fmt.Errorf("unable to sync acls from Primary: %w", err)
 					continue
 				}
 				slog.Info("Synced acls from Primary", "added", added, "deleted", deleted)
