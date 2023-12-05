@@ -131,20 +131,6 @@ func (a *AclManager) Primary(ctx context.Context) (primary *AclManager, err erro
 	return nil, err
 }
 
-// SyncAcls connects to master node and syncs the acls to the current node
-func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (added []string, deleted []string, err error) {
-	slog.Debug("Syncing acls")
-	if primary == nil {
-		return added, deleted, fmt.Errorf("no primary found")
-	}
-	added, deleted, err = mirrorAcls(ctx, primary.RedisClient, a.RedisClient)
-	if err != nil {
-		return added, deleted, fmt.Errorf("error syncing acls: %v", err)
-	}
-
-	return added, deleted, err
-}
-
 // Close closes the redis client
 func (a *AclManager) Close() error {
 	return a.RedisClient.Close()
@@ -178,15 +164,19 @@ func listAcls(ctx context.Context, client *redis.Client) (acls []string, err err
 	return acls, nil
 }
 
-// mirrorAcls returns a list of acls in the cluster based on the redis acl list command
-func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Client) (added []string, deleted []string, err error) {
-	slog.Debug("Mirroring acls")
-	sourceAcls, err := listAcls(ctx, source)
+// SyncAcls connects to master node and syncs the acls to the current node
+func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (added []string, deleted []string, err error) {
+	slog.Debug("Syncing acls")
+	if primary == nil {
+		return added, deleted, fmt.Errorf("no primary found")
+	}
+
+	sourceAcls, err := listAcls(ctx, primary.RedisClient)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error listing source acls: %v", err)
 	}
 
-	destinationAcls, err := listAcls(ctx, destination)
+	destinationAcls, err := listAcls(ctx, a.RedisClient)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error listing current acls: %v", err)
 	}
@@ -209,7 +199,7 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 		} else {
 			// If not found in source, delete from destination
 			slog.Debug("Deleting ACL", "username", username)
-			if err := destination.Do(context.Background(), "ACL", "DELUSER", username).Err(); err != nil {
+			if err := a.RedisClient.Do(context.Background(), "ACL", "DELUSER", username).Err(); err != nil {
 				return nil, nil, fmt.Errorf("error deleting acl: %v", err)
 			}
 			deleted = append(deleted, username)
@@ -225,7 +215,7 @@ func mirrorAcls(ctx context.Context, source *redis.Client, destination *redis.Cl
 		for i, s := range command {
 			commandInterfce[i] = s
 		}
-		if err := destination.Do(context.Background(), commandInterfce...).Err(); err != nil {
+		if err := a.RedisClient.Do(context.Background(), commandInterfce...).Err(); err != nil {
 			return nil, nil, fmt.Errorf("error setting acl: %v", err)
 		}
 		added = append(added, username)

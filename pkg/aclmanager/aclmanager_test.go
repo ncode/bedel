@@ -263,12 +263,27 @@ func TestMirrorAcls(t *testing.T) {
 			listAclsError:      fmt.Errorf("error listing destination ACLs"),
 			wantDestinationErr: true,
 		},
+		{
+			name:          "Invalid aclManagerPrimary",
+			listAclsError: fmt.Errorf("error listing destination ACLs"),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sourceClient, sourceMock := redismock.NewClientMock()
-			destinationClient, destMock := redismock.NewClientMock()
+			primaryClient, sourceMock := redismock.NewClientMock()
+			followerClient, destMock := redismock.NewClientMock()
+
+			aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int)}
+			aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int)}
+
+			if tt.name == "Invalid aclManagerPrimary" {
+				aclManagerPrimary = nil
+				_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+				assert.Error(t, err)
+				assert.Equal(t, "no primary found", err.Error())
+				return
+			}
 
 			if tt.listAclsError != nil && tt.wantSourceErr {
 				sourceMock.ExpectDo("ACL", "LIST").SetErr(tt.listAclsError)
@@ -300,7 +315,7 @@ func TestMirrorAcls(t *testing.T) {
 				}
 			}
 
-			added, deleted, err := mirrorAcls(context.Background(), sourceClient, destinationClient)
+			added, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
 			if err != nil {
 				if tt.wantSourceErr {
 					if tt.listAclsError != nil && !strings.Contains(err.Error(), tt.listAclsError.Error()) {
