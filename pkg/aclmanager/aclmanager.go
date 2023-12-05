@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,6 +32,8 @@ type AclManager struct {
 	Username    string
 	Password    string
 	RedisClient *redis.Client
+	primary     atomic.Bool
+	nodes       map[string]int
 }
 
 // New creates a new AclManager
@@ -48,15 +51,19 @@ func New(addr string, username string, password string) *AclManager {
 	}
 }
 
-type NodeInfo struct {
-	Address  string
-	Function int
-}
+// findNodes returns a list of nodes in the cluster based on the redis info replication command
+func (a *AclManager) findNodes(ctx context.Context) (err error) {
+	slog.Debug("Finding nodes")
+	replicationInfo, err := a.RedisClient.Info(ctx, "replication").Result()
+	if err != nil {
+		return err
+	}
 
-func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
+	a.primary.Store(role.MatchString(replicationInfo))
+
 	var masterHost, masterPort string
-
-	scanner := bufio.NewScanner(strings.NewReader(output))
+	var nodes []string
+	scanner := bufio.NewScanner(strings.NewReader(replicationInfo))
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -68,43 +75,27 @@ func parseRedisOutput(output string) (nodes []NodeInfo, err error) {
 		slog.Debug("Parsing line looking for Follower", "content", line)
 		if matches := primaryPortRegex.FindStringSubmatch(line); matches != nil {
 			masterPort = matches[1]
-			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", masterHost, masterPort), Function: Primary})
+			nodes = append(nodes, fmt.Sprintf("%s:%s", masterHost, masterPort))
 		}
 
 		if matches := followerRegex.FindStringSubmatch(line); matches != nil {
 			ip := matches[followerRegex.SubexpIndex("ip")]
 			port := matches[followerRegex.SubexpIndex("port")]
-			nodes = append(nodes, NodeInfo{Address: fmt.Sprintf("%s:%s", ip, port), Function: Follower})
+			nodes = append(nodes, fmt.Sprintf("%s:%s", ip, port))
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nodes, err
+		return err
 	}
 
-	return nodes, err
-}
-
-// FindNodes returns a list of nodes in the cluster based on the redis info replication command
-func (a *AclManager) FindNodes() (nodes []NodeInfo, err error) {
-	slog.Debug("Finding nodes")
-	replicationInfo, err := a.RedisClient.Info(context.Background(), "replication").Result()
-	if err != nil {
-		return nodes, err
-	}
-
-	nodes, err = parseRedisOutput(replicationInfo)
-	if err != nil {
-		return nodes, err
-	}
-
-	return nodes, err
+	return err
 }
 
 // CurrentFunction check if the current node is the Primary node
-func (a *AclManager) CurrentFunction() (function int, err error) {
+func (a *AclManager) CurrentFunction(ctx context.Context) (function int, err error) {
 	slog.Debug("Check node current function")
-	replicationInfo, err := a.RedisClient.Info(context.Background(), "replication").Result()
+	replicationInfo, err := a.RedisClient.Info(ctx, "replication").Result()
 	if err != nil {
 		return function, err
 	}
@@ -116,34 +107,32 @@ func (a *AclManager) CurrentFunction() (function int, err error) {
 	return Follower, err
 }
 
-// SyncAcls connects to master node and syncs the acls to the current node
-func (a *AclManager) SyncAcls() (err error) {
-	slog.Debug("Syncing acls")
-	nodes, err := a.FindNodes()
+func (a *AclManager) Primary(ctx context.Context) (primary *AclManager, err error) {
+	err = a.findNodes(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	ctx := context.Background()
-	for _, node := range nodes {
-		if node.Function == Primary {
-			if a.Addr == node.Address {
-				return err
-			}
-			master := redis.NewClient(&redis.Options{
-				Addr:     node.Address,
-				Username: a.Username,
-				Password: a.Password,
-			})
-			defer master.Close()
-
-			added, deleted, err := mirrorAcls(ctx, master, a.RedisClient)
-			if err != nil {
-				return fmt.Errorf("error syncing acls: %v", err)
-			}
-			slog.Info("Synced acls", "added", added, "deleted", deleted)
+	for address, function := range a.nodes {
+		if function == Primary {
+			return New(address, a.Username, a.Username), err
 		}
 	}
+
+	return nil, err
+}
+
+// SyncAcls connects to master node and syncs the acls to the current node
+func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (err error) {
+	slog.Debug("Syncing acls")
+	if primary == nil {
+		return fmt.Errorf("no primary found")
+	}
+	added, deleted, err := mirrorAcls(ctx, primary.RedisClient, a.RedisClient)
+	if err != nil {
+		return fmt.Errorf("error syncing acls: %v", err)
+	}
+	slog.Info("Synced acls", "added", added, "deleted", deleted)
 
 	return err
 }
@@ -242,22 +231,28 @@ func (a *AclManager) Loop(ctx context.Context) (err error) {
 	ticker := time.NewTicker(viper.GetDuration("syncInterval") * time.Second)
 	defer ticker.Stop()
 
+	var primary *AclManager
 	for {
 		select {
 		case <-ctx.Done():
 			return err
 		case <-ticker.C:
-			function, e := a.CurrentFunction()
+			function, e := a.CurrentFunction(ctx)
 			if err != nil {
-				slog.Warn("unable to check if it's a primary", "message", e)
-				err = fmt.Errorf("unable to check if it's a primary: %w", e)
+				slog.Warn("unable to check if it's a Primary", "message", e)
+				err = fmt.Errorf("unable to check if it's a Primary: %w", e)
 			}
 			if function == Follower {
-				e = a.SyncAcls()
+				primary, err = a.Primary(ctx)
 				if err != nil {
-					slog.Warn("unable to sync acls from primary", "message", e)
+					slog.Warn("unable to find Primary", "message", e)
+					continue
 				}
-				err = fmt.Errorf("unable to sync acls from primary: %w", e)
+				e = a.SyncAcls(ctx, primary)
+				if err != nil {
+					slog.Warn("unable to sync acls from Primary", "message", e)
+				}
+				err = fmt.Errorf("unable to sync acls from Primary: %w", e)
 			}
 		}
 	}

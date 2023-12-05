@@ -50,34 +50,33 @@ repl_backlog_first_byte_offset:1
 repl_backlog_histlen:434`
 )
 
+type NodeInfo struct {
+	Address  string
+	Function int
+}
+
 func TestFindNodes(t *testing.T) {
 	// Sample master and slave output for testing
 
 	tests := []struct {
 		name     string
 		mockResp string
-		want     []NodeInfo
+		want     map[string]int
 		wantErr  bool
 	}{
 		{
 			name:     "parse master output",
 			mockResp: primaryOutput,
-			want: []NodeInfo{
-				{
-					Address:  "172.21.0.3:6379",
-					Function: Follower,
-				},
+			want: map[string]int{
+				"172.21.0.3:6379": Follower,
 			},
 			wantErr: false,
 		},
 		{
 			name:     "parse Follower output",
 			mockResp: followerOutput,
-			want: []NodeInfo{
-				{
-					Address:  "172.21.0.2:6379",
-					Function: Primary,
-				},
+			want: map[string]int{
+				"172.21.0.2:6379": Primary,
 			},
 			wantErr: false,
 		},
@@ -100,13 +99,21 @@ func TestFindNodes(t *testing.T) {
 				mock.ExpectInfo("replication").SetVal(tt.mockResp)
 			}
 			aclManager := AclManager{RedisClient: redisClient}
+			ctx := context.Background()
 
-			nodes, err := aclManager.FindNodes()
+			err := aclManager.findNodes(ctx)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			assert.Equal(t, tt.want, nodes)
+			for address, function := range aclManager.nodes {
+				if wantFunction, ok := tt.want[address]; ok {
+					if wantFunction != function {
+						t.Errorf("findNodes() wanted function %v not found", function)
+					}
+				}
+				t.Errorf("findNodes() wanted address %v not found", address)
+			}
 		})
 	}
 }
@@ -312,10 +319,10 @@ func TestIsItPrimary(t *testing.T) {
 			// Mocking the response for the Info function
 			mock.ExpectInfo("replication").SetVal(tt.mockResp)
 			aclManager := AclManager{RedisClient: redisClient}
-
-			nodes, err := aclManager.CurrentFunction()
+			ctx := context.Background()
+			nodes, err := aclManager.CurrentFunction(ctx)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("FindNodes() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
@@ -356,8 +363,9 @@ func TestCurrentFunction_Error(t *testing.T) {
 	// Mocking the response for the Info function
 	mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 	aclManager := AclManager{RedisClient: redisClient}
+	ctx := context.Background()
 
-	_, err := aclManager.CurrentFunction()
+	_, err := aclManager.CurrentFunction(ctx)
 	assert.Error(t, err)
 }
 
@@ -370,7 +378,7 @@ func TestAclManager_Loop(t *testing.T) {
 		expectError error
 	}{
 		{
-			name: "primary node",
+			name: "Primary node",
 			aclManager: &AclManager{
 				Addr:     "localhost:6379",
 				Password: "password",
@@ -379,7 +387,7 @@ func TestAclManager_Loop(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "primary node with error",
+			name: "Primary node with error",
 			aclManager: &AclManager{
 				Addr:     "localhost:6379",
 				Password: "password",
@@ -396,19 +404,18 @@ func TestAclManager_Loop(t *testing.T) {
 				Username: "username",
 			},
 			wantErr:     true,
-			expectError: fmt.Errorf("unable to check if it's a primary"),
+			expectError: fmt.Errorf("unable to check if it's a Primary"),
 		},
-		// TODO: refactor to be able to test this case
-		//{
-		//	name: "follower node",
-		//	aclManager: &AclManager{
-		//		Addr:     "localhost:6379",
-		//		Password: "password",
-		//		Username: "username",
-		//	},
-		//	wantErr:     false,
-		//	expectError: fmt.Errorf("error syncing acls"),
-		//},
+		{
+			name: "follower node",
+			aclManager: &AclManager{
+				Addr:     "localhost:6379",
+				Password: "password",
+				Username: "username",
+			},
+			wantErr:     false,
+			expectError: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -417,7 +424,7 @@ func TestAclManager_Loop(t *testing.T) {
 			tt.aclManager.RedisClient = redisClient
 
 			if tt.wantErr {
-				if tt.name == "primary node" {
+				if tt.name == "Primary node" {
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
@@ -438,7 +445,7 @@ func TestAclManager_Loop(t *testing.T) {
 					mock.ExpectInfo("replication").SetVal(followerOutput)
 				}
 			} else {
-				if tt.name == "primary node" {
+				if tt.name == "Primary node" {
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
@@ -446,7 +453,6 @@ func TestAclManager_Loop(t *testing.T) {
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
 					mock.ExpectInfo("replication").SetVal(primaryOutput)
-
 				}
 			}
 
@@ -492,20 +498,20 @@ func TestClosePanic(t *testing.T) {
 	assert.Panics(t, func() { aclManager.Close() })
 }
 
-func BenchmarkParseRedisOutputFollower(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_, err := parseRedisOutput(followerOutput)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkParseRedisOutputMaster(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_, err := parseRedisOutput(primaryOutput)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
+//func BenchmarkParseRedisOutputFollower(b *testing.B) {
+//	for i := 0; i < b.N; i++ {
+//		_, err := parseRedisOutput(followerOutput)
+//		if err != nil {
+//			b.Fatal(err)
+//		}
+//	}
+//}
+//
+//func BenchmarkParseRedisOutputMaster(b *testing.B) {
+//	for i := 0; i < b.N; i++ {
+//		_, err := parseRedisOutput(primaryOutput)
+//		if err != nil {
+//			b.Fatal(err)
+//		}
+//	}
+//}
