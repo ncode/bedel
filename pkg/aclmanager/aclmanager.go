@@ -188,14 +188,12 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (added [
 	}
 
 	// Delete ACLs not in source and remove from the toAdd map if present in destination
-	var insync uint
 	for _, acl := range destinationAcls {
 		username := strings.Split(acl, " ")[1]
 		if _, found := toAdd[acl]; found {
 			// If found in source, don't need to add, so remove from map
 			delete(toAdd, acl)
 			slog.Debug("ACL already in sync", "username", username)
-			insync++
 		} else {
 			// If not found in source, delete from destination
 			slog.Debug("Deleting ACL", "username", username)
