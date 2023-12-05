@@ -89,14 +89,14 @@ func (a *AclManager) findNodes(ctx context.Context) (err error) {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
 	for _, node := range nodes {
 		if _, ok := a.nodes[node]; !ok {
 			delete(a.nodes, node)
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return err
 	}
 
 	return err
