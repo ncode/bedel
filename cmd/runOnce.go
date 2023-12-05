@@ -18,6 +18,8 @@ package cmd
 import (
 	"github.com/ncode/bedel/pkg/aclmanager"
 	"github.com/spf13/viper"
+	"log/slog"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -25,12 +27,30 @@ import (
 // runOnceCmd represents the runOnce command
 var runOnceCmd = &cobra.Command{
 	Use:   "runOnce",
-	Short: "Run the acl manager once, it will sync the follower with the master",
+	Short: "Run the acl manager once, it will sync the follower with the primary",
 	Run: func(cmd *cobra.Command, args []string) {
-		mgr := aclmanager.New(viper.GetString("address"), viper.GetString("username"), viper.GetString("password"))
-		err := mgr.SyncAcls()
+		ctx := cmd.Context()
+		aclManager := aclmanager.New(viper.GetString("address"), viper.GetString("username"), viper.GetString("password"))
+		function, err := aclManager.CurrentFunction(ctx)
 		if err != nil {
-			panic(err)
+			slog.Warn("unable to check if it's a Primary", "message", err)
+			os.Exit(1)
+		}
+		if function == aclmanager.Follower {
+			primary, err := aclManager.Primary(ctx)
+			if err != nil {
+				slog.Warn("unable to find Primary", "message", err)
+				os.Exit(1)
+			}
+			var added, deleted []string
+			added, deleted, err = aclManager.SyncAcls(ctx, primary)
+			if err != nil {
+				slog.Warn("unable to sync acls from Primary", "message", err)
+				os.Exit(1)
+			}
+			slog.Info("Synced acls from Primary", "added", added, "deleted", deleted)
+		} else {
+			slog.Info("Not a follower, nothing to do")
 		}
 	},
 }

@@ -129,18 +129,17 @@ func (a *AclManager) Primary(ctx context.Context) (primary *AclManager, err erro
 }
 
 // SyncAcls connects to master node and syncs the acls to the current node
-func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (err error) {
+func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (added []string, deleted []string, err error) {
 	slog.Debug("Syncing acls")
 	if primary == nil {
-		return fmt.Errorf("no primary found")
+		return added, deleted, fmt.Errorf("no primary found")
 	}
-	added, deleted, err := mirrorAcls(ctx, primary.RedisClient, a.RedisClient)
+	added, deleted, err = mirrorAcls(ctx, primary.RedisClient, a.RedisClient)
 	if err != nil {
-		return fmt.Errorf("error syncing acls: %v", err)
+		return added, deleted, fmt.Errorf("error syncing acls: %v", err)
 	}
-	slog.Info("Synced acls", "added", added, "deleted", deleted)
 
-	return err
+	return added, deleted, err
 }
 
 // Close closes the redis client
@@ -254,11 +253,14 @@ func (a *AclManager) Loop(ctx context.Context) (err error) {
 					slog.Warn("unable to find Primary", "message", e)
 					continue
 				}
-				e = a.SyncAcls(ctx, primary)
+				var added, deleted []string
+				added, deleted, err = a.SyncAcls(ctx, primary)
 				if err != nil {
 					slog.Warn("unable to sync acls from Primary", "message", e)
+					err = fmt.Errorf("unable to sync acls from Primary: %w", e)
+					continue
 				}
-				err = fmt.Errorf("unable to sync acls from Primary: %w", e)
+				slog.Info("Synced acls from Primary", "added", added, "deleted", deleted)
 			}
 		}
 	}

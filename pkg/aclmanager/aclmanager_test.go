@@ -50,11 +50,6 @@ repl_backlog_first_byte_offset:1
 repl_backlog_histlen:434`
 )
 
-type NodeInfo struct {
-	Address  string
-	Function int
-}
-
 func TestFindNodes(t *testing.T) {
 	// Sample master and slave output for testing
 
