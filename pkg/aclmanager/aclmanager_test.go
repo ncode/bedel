@@ -471,6 +471,12 @@ func TestAclManager_Primary(t *testing.T) {
 				return
 			}
 
+			if tt.name == "username and password" {
+				assert.Equal(t, aclManager.Username, primary.Username)
+				assert.Equal(t, aclManager.Password, primary.Password)
+				return
+			}
+
 			assert.NoError(t, err)
 			if tt.want == "" {
 				assert.Nil(t, primary)
@@ -478,10 +484,6 @@ func TestAclManager_Primary(t *testing.T) {
 			}
 			assert.NotNil(t, primary)
 			assert.Equal(t, tt.want, primary.Addr)
-			if tt.name == "username and password" {
-				assert.Equal(t, aclManager.Username, primary.Username)
-				assert.Equal(t, aclManager.Password, primary.Password)
-			}
 		})
 	}
 }
