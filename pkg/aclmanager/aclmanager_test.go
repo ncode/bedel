@@ -444,6 +444,11 @@ func TestAclManager_Primary(t *testing.T) {
 			mockResp: followerOutput,
 			wantErr:  true,
 		},
+		{
+			name:     "username and password",
+			mockResp: followerOutput,
+			wantErr:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -473,8 +478,10 @@ func TestAclManager_Primary(t *testing.T) {
 			}
 			assert.NotNil(t, primary)
 			assert.Equal(t, tt.want, primary.Addr)
-			assert.Equal(t, aclManager.Username, primary.Username)
-			assert.Equal(t, aclManager.Password, primary.Password)
+			if tt.name == "username and password" {
+				assert.Equal(t, aclManager.Username, primary.Username)
+				assert.Equal(t, aclManager.Password, primary.Password)
+			}
 		})
 	}
 }
