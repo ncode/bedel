@@ -22,6 +22,18 @@ services:
       - "redis0001"
       - "6379"
 
+  redis0003:
+    image: redis:latest
+    container_name: redis0003
+    volumes:
+      - ./redis:/usr/local/etc/redis:rw
+    command:
+      - "redis-server"
+      - "/usr/local/etc/redis/redis.conf"
+      - "--slaveof"
+      - "redis0001"
+      - "6379"
+
   bedel_redis0001:
     image: ncode/bedel:dev
     container_name: bedel_redis0001
@@ -49,6 +61,17 @@ services:
       - "bedel-integration-test"
       - "-l"
       - "info"
+
+  bedel_redis0003:
+    image: ncode/bedel:dev
+    container_name: bedel_redis0003
+    depends_on:
+      - vault
+    command:
+      - "run"
+    environment:
+      ADDRESS: "redis0003:6379"
+      PASSWORD: "bedel-integration-test"
 
   vault:
     image: hashicorp/vault:latest
