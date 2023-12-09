@@ -165,10 +165,10 @@ func listAcls(ctx context.Context, client *redis.Client) (acls []string, err err
 }
 
 // SyncAcls connects to master node and syncs the acls to the current node
-func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (added []string, deleted []string, err error) {
+func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (updated []string, deleted []string, err error) {
 	slog.Debug("Syncing acls")
 	if primary == nil {
-		return added, deleted, fmt.Errorf("no primary found")
+		return updated, deleted, fmt.Errorf("no primary found")
 	}
 
 	sourceAcls, err := listAcls(ctx, primary.RedisClient)
@@ -182,31 +182,34 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (added [
 	}
 
 	// Map to keep track of ACLs to add
-	toAdd := make(map[string]struct{})
+	toUpdate := make(map[string]string)
 	for _, acl := range sourceAcls {
-		toAdd[acl] = struct{}{}
+		username := strings.Split(acl, " ")[1]
+		toUpdate[username] = acl
 	}
 
-	// Delete ACLs not in source and remove from the toAdd map if present in destination
+	// Delete ACLs not in source and remove from the toUpdate map if present in destination
 	for _, acl := range destinationAcls {
 		username := strings.Split(acl, " ")[1]
-		if _, found := toAdd[acl]; found {
-			// If found in source, don't need to add, so remove from map
-			delete(toAdd, acl)
-			slog.Debug("ACL already in sync", "username", username)
-		} else {
-			// If not found in source, delete from destination
-			slog.Debug("Deleting ACL", "username", username)
-			if err := a.RedisClient.Do(context.Background(), "ACL", "DELUSER", username).Err(); err != nil {
-				return nil, nil, fmt.Errorf("error deleting acl: %v", err)
+		if currentAcl, found := toUpdate[username]; found {
+			if currentAcl == acl {
+				// If found in source, don't need to add, so remove from map
+				delete(toUpdate, username)
+				slog.Debug("ACL already in sync", "username", username)
 			}
-			deleted = append(deleted, username)
+			continue
 		}
+
+		// If not found in source, delete from destination
+		slog.Debug("Deleting ACL", "username", username)
+		if err := a.RedisClient.Do(context.Background(), "ACL", "DELUSER", username).Err(); err != nil {
+			return nil, nil, fmt.Errorf("error deleting acl: %v", err)
+		}
+		deleted = append(deleted, username)
 	}
 
 	// Add remaining ACLs from source
-	for acl := range toAdd {
-		username := strings.Split(acl, " ")[1]
+	for username, acl := range toUpdate {
 		slog.Debug("Syncing ACL", "username", username, "line", acl)
 		command := strings.Split(filterUser.ReplaceAllString(acl, "ACL SETUSER "), " ")
 		commandInterfce := make([]interface{}, len(command))
@@ -216,10 +219,10 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (added [
 		if err := a.RedisClient.Do(context.Background(), commandInterfce...).Err(); err != nil {
 			return nil, nil, fmt.Errorf("error setting acl: %v", err)
 		}
-		added = append(added, username)
+		updated = append(updated, username)
 	}
 
-	return added, deleted, nil
+	return updated, deleted, nil
 }
 
 // Loop loops through the sync interval and syncs the acls
