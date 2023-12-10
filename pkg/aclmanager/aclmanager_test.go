@@ -544,7 +544,7 @@ func TestAclManager_Loop(t *testing.T) {
 				nodes:    make(map[string]int),
 			},
 			wantErr:     true,
-			expectError: fmt.Errorf("error"),
+			expectError: fmt.Errorf("unable to find Primary"),
 		},
 		{
 			name: "follower node with error",
@@ -576,7 +576,7 @@ func TestAclManager_Loop(t *testing.T) {
 			tt.aclManager.RedisClient = redisClient
 
 			if tt.wantErr {
-				if tt.name == "Primary node" {
+				if tt.name == "Primary node with error" {
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
 					mock.ExpectInfo("replication").SetErr(fmt.Errorf("error"))
