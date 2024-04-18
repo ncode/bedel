@@ -221,8 +221,11 @@ func TestSyncAcls(t *testing.T) {
 		expectedUpdated    []string
 		listAclsError      error
 		redisDoError       error
+		saveAclError       error
+		loadAclError       error
 		wantSourceErr      bool
 		wantDestinationErr bool
+		aclFile            bool
 	}{
 		{
 			name:            "ACLs synced with deletions",
@@ -274,6 +277,37 @@ func TestSyncAcls(t *testing.T) {
 			name:          "Invalid aclManagerPrimary",
 			listAclsError: fmt.Errorf("error listing destination ACLs"),
 		},
+		{
+			name:            "ACLs synced with deletions, aclFile",
+			sourceAcls:      []interface{}{"user acl1", "user acl2"},
+			destinationAcls: []interface{}{"user acl1", "user acl3"},
+			expectedDeleted: []string{"acl3"},
+			expectedUpdated: []string{"acl2"},
+			aclFile:         true,
+		},
+		{
+			name:          "Error on save ACL file on primary, aclFile",
+			sourceAcls:    []interface{}{"user acl1", "user acl2"},
+			saveAclError:  fmt.Errorf("failed to save ACL on primary"),
+			aclFile:       true,
+			wantSourceErr: true,
+		},
+		{
+			name:               "Error on save ACL file on destination, aclFile",
+			sourceAcls:         []interface{}{"user acl1", "user acl2"},
+			destinationAcls:    []interface{}{"user acl1", "user acl3"},
+			saveAclError:       fmt.Errorf("failed to save ACL on destination"),
+			aclFile:            true,
+			wantDestinationErr: true,
+		},
+		{
+			name:               "Error on load ACL file, aclFile",
+			sourceAcls:         []interface{}{"user acl1", "user acl2"},
+			destinationAcls:    []interface{}{"user acl1", "user acl3"},
+			loadAclError:       fmt.Errorf("failed to load ACL"),
+			aclFile:            true,
+			wantDestinationErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -319,6 +353,30 @@ func TestSyncAcls(t *testing.T) {
 						}
 						destMock.ExpectDo("ACL", "SETUSER", username).SetVal("OK")
 					}
+				}
+			}
+
+			if tt.listAclsError != nil && tt.wantDestinationErr {
+				destMock.ExpectDo("ACL", "LIST").SetErr(tt.listAclsError)
+			} else {
+				destMock.ExpectDo("ACL", "LIST").SetVal(tt.destinationAcls)
+			}
+
+			if tt.aclFile {
+				if tt.saveAclError != nil {
+					sourceMock.ExpectDo("ACL", "SAVE").SetErr(tt.saveAclError)
+					if !tt.wantSourceErr {
+						destMock.ExpectDo("ACL", "SAVE").SetErr(tt.saveAclError)
+					}
+				} else {
+					sourceMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+					destMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+				}
+
+				if tt.loadAclError != nil && !tt.wantSourceErr {
+					destMock.ExpectDo("ACL", "LOAD").SetErr(tt.loadAclError)
+				} else {
+					destMock.ExpectDo("ACL", "LOAD").SetVal("OK")
 				}
 			}
 
@@ -531,6 +589,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				aclFile:  false,
 				nodes:    make(map[string]int),
 			},
 			wantErr: false,
@@ -541,6 +600,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				aclFile:  false,
 				nodes:    make(map[string]int),
 			},
 			wantErr:     true,
@@ -552,6 +612,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				aclFile:  false,
 				nodes:    make(map[string]int),
 			},
 			wantErr:     true,
@@ -563,6 +624,7 @@ func TestAclManager_Loop(t *testing.T) {
 				Addr:     "localhost:6379",
 				Password: "password",
 				Username: "username",
+				aclFile:  false,
 				nodes:    make(map[string]int),
 			},
 			wantErr:     false,
@@ -650,20 +712,88 @@ func TestClosePanic(t *testing.T) {
 	assert.Panics(t, func() { aclManager.Close() })
 }
 
-//func BenchmarkParseRedisOutputFollower(b *testing.B) {
-//	for i := 0; i < b.N; i++ {
-//		_, err := parseRedisOutput(followerOutput)
-//		if err != nil {
-//			b.Fatal(err)
-//		}
-//	}
-//}
-//
-//func BenchmarkParseRedisOutputMaster(b *testing.B) {
-//	for i := 0; i < b.N; i++ {
-//		_, err := parseRedisOutput(primaryOutput)
-//		if err != nil {
-//			b.Fatal(err)
-//		}
-//	}
-//}
+func TestSaveAclFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+		err     error
+	}{
+		{
+			name:    "successful ACL save",
+			wantErr: false,
+		},
+		{
+			name:    "error saving ACL to file",
+			wantErr: true,
+			err:     fmt.Errorf("failed to save ACL"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+			if tt.wantErr {
+				mock.ExpectDo("ACL", "SAVE").SetErr(tt.err)
+			} else {
+				mock.ExpectDo("ACL", "SAVE").SetVal("OK")
+			}
+
+			ctx := context.Background()
+			err := saveAclFile(ctx, redisClient)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("saveAclFile() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.wantErr && !strings.HasSuffix(err.Error(), tt.err.Error()) {
+				t.Errorf("saveAclFile() got unexpected error = %v, want %v", err, tt.err)
+			}
+
+			assertExpectations(t, mock)
+		})
+	}
+}
+
+func assertExpectations(t *testing.T, mock redismock.ClientMock) {
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unmet expectations: %s", err)
+	}
+}
+
+func TestLoadAclFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+		err     error
+	}{
+		{
+			name:    "successful ACL load",
+			wantErr: false,
+		},
+		{
+			name:    "error loading ACL from file",
+			wantErr: true,
+			err:     fmt.Errorf("failed to load ACL"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+			if tt.wantErr {
+				mock.ExpectDo("ACL", "LOAD").SetErr(tt.err)
+			} else {
+				mock.ExpectDo("ACL", "LOAD").SetVal("OK")
+			}
+
+			ctx := context.Background()
+			err := loadAclFile(ctx, redisClient)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("loadAclFile() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.wantErr && !strings.HasSuffix(err.Error(), tt.err.Error()) {
+				t.Errorf("loadAclFile() got unexpected error = %v, want %v", err, tt.err)
+			}
+
+			assertExpectations(t, mock)
+		})
+	}
+}

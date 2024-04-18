@@ -35,7 +35,7 @@ type AclManager struct {
 	RedisClient *redis.Client
 	primary     atomic.Bool
 	nodes       map[string]int
-	aclfile     bool
+	aclFile     bool
 }
 
 // New creates a new AclManager
@@ -51,7 +51,7 @@ func New(addr string, username string, password string, aclfile bool) *AclManage
 		Password:    password,
 		RedisClient: redisClient,
 		nodes:       make(map[string]int),
-		aclfile:     aclfile,
+		aclFile:     aclfile,
 	}
 }
 
@@ -126,7 +126,7 @@ func (a *AclManager) Primary(ctx context.Context) (primary *AclManager, err erro
 
 	for address, function := range a.nodes {
 		if function == Primary {
-			return New(address, a.Username, a.Password, a.aclfile), err
+			return New(address, a.Username, a.Password, a.aclFile), err
 		}
 	}
 
@@ -166,21 +166,21 @@ func listAcls(ctx context.Context, client *redis.Client) (acls []string, err err
 	return acls, nil
 }
 
-// saveAclFile call the redis command ACL SAVE to save the acls to the aclfile
+// saveAclFile call the redis command ACL SAVE to save the acls to the aclFile
 func saveAclFile(ctx context.Context, client *redis.Client) error {
-	slog.Debug("Saving acls to aclfile")
+	slog.Debug("Saving acls to aclFile")
 	if err := client.Do(ctx, "ACL", "SAVE").Err(); err != nil {
-		return fmt.Errorf("error saving acls to aclfile: %v", err)
+		return fmt.Errorf("error saving acls to aclFile: %v", err)
 	}
 
 	return nil
 }
 
-// loadAclFile call the redis command ACL LOAD to load the acls from the aclfile
+// loadAclFile call the redis command ACL LOAD to load the acls from the aclFile
 func loadAclFile(ctx context.Context, client *redis.Client) error {
-	slog.Debug("Loading acls from aclfile")
+	slog.Debug("Loading acls from aclFile")
 	if err := client.Do(ctx, "ACL", "LOAD").Err(); err != nil {
-		return fmt.Errorf("error loading acls from aclfile: %v", err)
+		return fmt.Errorf("error loading acls from aclFile: %v", err)
 	}
 
 	return nil
@@ -198,10 +198,10 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (updated
 		return nil, nil, fmt.Errorf("error listing source acls: %v", err)
 	}
 
-	if a.aclfile {
+	if a.aclFile {
 		err = saveAclFile(ctx, primary.RedisClient)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error saving primary acls to aclfile: %v", err)
+			return nil, nil, fmt.Errorf("error saving primary acls to aclFile: %v", err)
 		}
 	}
 
@@ -251,14 +251,14 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (updated
 		updated = append(updated, username)
 	}
 
-	if a.aclfile {
+	if a.aclFile {
 		err = saveAclFile(ctx, a.RedisClient)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error saving acls to aclfile: %v", err)
+			return nil, nil, fmt.Errorf("error saving acls to aclFile: %v", err)
 		}
 		err = loadAclFile(ctx, a.RedisClient)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error loading synced acls from aclfile: %v", err)
+			return nil, nil, fmt.Errorf("error loading synced acls from aclFile: %v", err)
 		}
 	}
 
