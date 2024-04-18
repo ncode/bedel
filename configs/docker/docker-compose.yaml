@@ -8,7 +8,9 @@ services:
       - "6379:6379"
     volumes:
       - ./redis:/usr/local/etc/redis:rw
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: 
+      - "redis-server" 
+      - "/usr/local/etc/redis/redis0001.conf"
 
   redis0002:
     image: redis:latest
@@ -17,7 +19,7 @@ services:
       - ./redis:/usr/local/etc/redis:rw
     command:
       - "redis-server"
-      - "/usr/local/etc/redis/redis.conf"
+      - "/usr/local/etc/redis/redis0002.conf"
       - "--slaveof"
       - "redis0001"
       - "6379"
@@ -29,7 +31,7 @@ services:
       - ./redis:/usr/local/etc/redis:rw
     command:
       - "redis-server"
-      - "/usr/local/etc/redis/redis.conf"
+      - "/usr/local/etc/redis/redis0003.conf"
       - "--slaveof"
       - "redis0001"
       - "6379"
@@ -69,6 +71,7 @@ services:
       - vault
     command:
       - "run"
+      - "--aclfile"
     environment:
       ADDRESS: "redis0003:6379"
       PASSWORD: "bedel-integration-test"
