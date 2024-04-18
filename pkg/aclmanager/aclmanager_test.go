@@ -654,20 +654,88 @@ func TestClosePanic(t *testing.T) {
 	assert.Panics(t, func() { aclManager.Close() })
 }
 
-//func BenchmarkParseRedisOutputFollower(b *testing.B) {
-//	for i := 0; i < b.N; i++ {
-//		_, err := parseRedisOutput(followerOutput)
-//		if err != nil {
-//			b.Fatal(err)
-//		}
-//	}
-//}
-//
-//func BenchmarkParseRedisOutputMaster(b *testing.B) {
-//	for i := 0; i < b.N; i++ {
-//		_, err := parseRedisOutput(primaryOutput)
-//		if err != nil {
-//			b.Fatal(err)
-//		}
-//	}
-//}
+func TestSaveAclFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+		err     error
+	}{
+		{
+			name:    "successful ACL save",
+			wantErr: false,
+		},
+		{
+			name:    "error saving ACL to file",
+			wantErr: true,
+			err:     fmt.Errorf("failed to save ACL"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+			if tt.wantErr {
+				mock.ExpectDo("ACL", "SAVE").SetErr(tt.err)
+			} else {
+				mock.ExpectDo("ACL", "SAVE").SetVal("OK")
+			}
+
+			ctx := context.Background()
+			err := saveAclFile(ctx, redisClient)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("saveAclFile() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.wantErr && !strings.HasSuffix(err.Error(), tt.err.Error()) {
+				t.Errorf("saveAclFile() got unexpected error = %v, want %v", err, tt.err)
+			}
+
+			assertExpectations(t, mock)
+		})
+	}
+}
+
+func assertExpectations(t *testing.T, mock redismock.ClientMock) {
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unmet expectations: %s", err)
+	}
+}
+
+func TestLoadAclFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+		err     error
+	}{
+		{
+			name:    "successful ACL load",
+			wantErr: false,
+		},
+		{
+			name:    "error loading ACL from file",
+			wantErr: true,
+			err:     fmt.Errorf("failed to load ACL"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+			if tt.wantErr {
+				mock.ExpectDo("ACL", "LOAD").SetErr(tt.err)
+			} else {
+				mock.ExpectDo("ACL", "LOAD").SetVal("OK")
+			}
+
+			ctx := context.Background()
+			err := loadAclFile(ctx, redisClient)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("loadAclFile() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.wantErr && !strings.HasSuffix(err.Error(), tt.err.Error()) {
+				t.Errorf("loadAclFile() got unexpected error = %v, want %v", err, tt.err)
+			}
+
+			assertExpectations(t, mock)
+		})
+	}
+}
