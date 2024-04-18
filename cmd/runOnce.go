@@ -30,7 +30,7 @@ var runOnceCmd = &cobra.Command{
 	Short: "Run the acl manager once, it will sync the follower with the primary",
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
-		aclManager := aclmanager.New(viper.GetString("address"), viper.GetString("username"), viper.GetString("password"))
+		aclManager := aclmanager.New(viper.GetString("address"), viper.GetString("username"), viper.GetString("password"), viper.GetBool("aclfile"))
 		function, err := aclManager.CurrentFunction(ctx)
 		if err != nil {
 			slog.Warn("unable to check if it's a Primary", "message", err)

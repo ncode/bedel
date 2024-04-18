@@ -429,7 +429,7 @@ func TestNewAclManager(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := New(tt.want.Addr, tt.want.Username, tt.want.Password)
+			got := New(tt.want.Addr, tt.want.Username, tt.want.Password, false)
 			assert.Equal(t, tt.want.Addr, got.Addr)
 			assert.Equal(t, tt.want.Username, got.Username)
 			assert.Equal(t, tt.want.Password, got.Password)

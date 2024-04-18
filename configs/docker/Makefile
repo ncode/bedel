@@ -9,7 +9,10 @@ docker-build:
 	docker build -t ncode/bedel:dev .
 
 up:
+	echo > redis/redis0001.acl
+	echo > redis/redis0002.acl
+	echo > redis/redis0003.acl
 	docker compose up
 
-dowm:
-	docker compose dowm
+down:
+	docker compose down

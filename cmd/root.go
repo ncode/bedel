@@ -71,7 +71,8 @@ func init() {
 	viper.BindPFlag("username", rootCmd.PersistentFlags().Lookup("username"))
 	rootCmd.PersistentFlags().StringP("logLevel", "l", "INFO", "set default logLevel")
 	viper.BindPFlag("logLevel", rootCmd.PersistentFlags().Lookup("logLevel"))
-
+	rootCmd.PersistentFlags().Bool("aclfile", false, "defined if we should use the aclfile to sync acls")
+	viper.BindPFlag("aclfile", rootCmd.PersistentFlags().Lookup("aclfile"))
 }
 
 // initConfig reads in config file and ENV variables if set.
