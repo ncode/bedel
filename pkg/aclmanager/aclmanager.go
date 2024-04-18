@@ -256,7 +256,7 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) (updated
 		if err != nil {
 			return nil, nil, fmt.Errorf("error saving acls to aclfile: %v", err)
 		}
-		err = loadAclFile(ctx, primary.RedisClient)
+		err = loadAclFile(ctx, a.RedisClient)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error loading synced acls from aclfile: %v", err)
 		}
