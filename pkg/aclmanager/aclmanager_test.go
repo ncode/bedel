@@ -870,6 +870,8 @@ func TestSyncAcls_ACLFileEnabled(t *testing.T) {
 	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
 		"user acl1", "user acl3",
 	})
+	followerMock.ExpectDo("ACL", "DELUSER", "acl3").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SETUSER", "acl2").SetVal("OK")
 
 	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
 	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
