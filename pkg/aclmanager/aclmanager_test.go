@@ -797,3 +797,171 @@ func TestLoadAclFile(t *testing.T) {
 		})
 	}
 }
+
+func TestFindNodes_LargeCluster(t *testing.T) {
+	mockResp := generateLargeClusterOutput(1000) // Generates a mock output for 1000 nodes
+	redisClient, mock := redismock.NewClientMock()
+	mock.ExpectInfo("replication").SetVal(mockResp)
+
+	aclManager := AclManager{RedisClient: redisClient, nodes: make(map[string]int)}
+	ctx := context.Background()
+
+	err := aclManager.findNodes(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, 1000, len(aclManager.nodes))
+}
+
+func TestLoop_ShortInterval(t *testing.T) {
+	viper.Set("syncInterval", 1) // Set a very short sync interval for testing
+	redisClient, mock := redismock.NewClientMock()
+
+	aclManager := &AclManager{
+		Addr:        "localhost:6379",
+		Password:    "password",
+		Username:    "username",
+		RedisClient: redisClient,
+		nodes:       make(map[string]int),
+	}
+
+	mock.ExpectInfo("replication").SetVal(followerOutput)
+	mock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user default on nopass ~* &* +@all",
+	})
+
+	// Set up a cancellable context to control the loop
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Run Loop in a separate goroutine
+	done := make(chan error, 1)
+	go func() {
+		done <- aclManager.Loop(ctx)
+	}()
+
+	time.Sleep(time.Second * 5) // Run the loop for a few seconds
+
+	// Cancel the context to stop the loop
+	cancel()
+
+	// Check for errors
+	err := <-done
+	assert.NoError(t, err)
+}
+
+func generateLargeClusterOutput(nodeCount int) string {
+	var sb strings.Builder
+	sb.WriteString("# Replication\nrole:master\nconnected_slaves:" + fmt.Sprint(nodeCount) + "\n")
+	for i := 0; i < nodeCount; i++ {
+		sb.WriteString(fmt.Sprintf("slave%d:ip=172.21.0.%d,port=6379,state=online,offset=322,lag=0\n", i, i+3))
+	}
+	return sb.String()
+}
+
+func TestSyncAcls_ACLFileEnabled(t *testing.T) {
+	primaryClient, primaryMock := redismock.NewClientMock()
+	followerClient, followerMock := redismock.NewClientMock()
+
+	aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int), aclFile: true}
+	aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int), aclFile: true}
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl3",
+	})
+	followerMock.ExpectDo("ACL", "DELUSER", "acl3").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SETUSER", "acl2").SetVal("OK")
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetVal("OK")
+
+	updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{"acl2"}, updated)
+	assert.ElementsMatch(t, []string{"acl3"}, deleted)
+}
+
+func TestSyncAcls_SaveACLFileError(t *testing.T) {
+	primaryClient, primaryMock := redismock.NewClientMock()
+	followerClient, followerMock := redismock.NewClientMock()
+
+	aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int), aclFile: true}
+	aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int), aclFile: true}
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl3",
+	})
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetErr(fmt.Errorf("failed to save ACL on primary"))
+
+	_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to save ACL on primary")
+}
+
+func TestSyncAcls_LoadACLFileError(t *testing.T) {
+	primaryClient, primaryMock := redismock.NewClientMock()
+	followerClient, followerMock := redismock.NewClientMock()
+
+	aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int), aclFile: true}
+	aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int), aclFile: true}
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetErr(fmt.Errorf("failed to load ACL on follower"))
+
+	_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to load ACL on follower")
+}
+
+func TestSyncAcls_ACLFileSync(t *testing.T) {
+	primaryClient, primaryMock := redismock.NewClientMock()
+	followerClient, followerMock := redismock.NewClientMock()
+
+	aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int), aclFile: true}
+	aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int), aclFile: true}
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2", "user acl3",
+	})
+	followerMock.ExpectDo("ACL", "DELUSER", "acl3").SetVal("OK")
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetVal("OK")
+
+	_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.NoError(t, err)
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetVal("OK")
+
+	updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.NoError(t, err)
+	assert.Empty(t, updated)
+	assert.Empty(t, deleted)
+}
