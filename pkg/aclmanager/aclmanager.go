@@ -250,7 +250,7 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 		return nil, nil, fmt.Errorf("SyncAcls: error listing current acls: %w", err)
 	}
 
-	toUpdate := make(map[string]string)
+	toUpdate := make(map[string]string, len(sourceAcls))
 	for _, acl := range sourceAcls {
 		username := strings.Fields(acl)[1]
 		toUpdate[username] = acl
