@@ -27,7 +27,7 @@ var (
 	filterUser       = regexp.MustCompile(`^user\s+`)
 )
 
-// AclManager contains the struct for bedel to manage the state of aclmanager acls
+// AclManager contains the struct for managing the state of ACLs
 type AclManager struct {
 	Addr        string
 	Username    string
@@ -64,7 +64,7 @@ func (a *AclManager) findNodes(ctx context.Context) error {
 	replicationInfo, err := a.RedisClient.Info(ctx, "replication").Result()
 	if err != nil {
 		slog.Error("Failed to get replication info", "error", err)
-		return err
+		return fmt.Errorf("findNodes: failed to get replication info: %w", err)
 	}
 
 	a.primary.Store(role.MatchString(replicationInfo))
@@ -100,7 +100,7 @@ func (a *AclManager) findNodes(ctx context.Context) error {
 
 	if err := scanner.Err(); err != nil {
 		slog.Error("Scanner error", "error", err)
-		return err
+		return fmt.Errorf("findNodes: scanner error: %w", err)
 	}
 
 	for _, node := range nodes {
@@ -121,7 +121,7 @@ func (a *AclManager) CurrentFunction(ctx context.Context) (int, error) {
 	err := a.findNodes(ctx)
 	if err != nil {
 		slog.Error("Failed to find nodes", "error", err)
-		return Unknown, err
+		return Unknown, fmt.Errorf("CurrentFunction: %w", err)
 	}
 	if a.primary.Load() {
 		slog.Info("Current node is Primary")
@@ -138,7 +138,7 @@ func (a *AclManager) Primary(ctx context.Context) (*AclManager, error) {
 	err := a.findNodes(ctx)
 	if err != nil {
 		slog.Error("Failed to find nodes", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("Primary: %w", err)
 	}
 
 	for address, function := range a.nodes {
@@ -165,14 +165,14 @@ func listAcls(ctx context.Context, client *redis.Client) ([]string, error) {
 	result, err := client.Do(ctx, "ACL", "LIST").Result()
 	if err != nil {
 		slog.Error("Failed to list ACLs", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("listAcls: %w", err)
 	}
 
 	aclList, ok := result.([]interface{})
 	if !ok {
 		err := fmt.Errorf("unexpected result format: %v", result)
 		slog.Error("Unexpected result format", "result", result)
-		return nil, err
+		return nil, fmt.Errorf("listAcls: %w", err)
 	}
 
 	if len(aclList) == 0 {
@@ -186,7 +186,7 @@ func listAcls(ctx context.Context, client *redis.Client) ([]string, error) {
 		if !ok {
 			err := fmt.Errorf("unexpected type for ACL: %v", acl)
 			slog.Error("Unexpected type for ACL", "acl", acl)
-			return nil, err
+			return nil, fmt.Errorf("listAcls: %w", err)
 		}
 		acls[i] = aclStr
 	}
@@ -201,7 +201,7 @@ func saveAclFile(ctx context.Context, client *redis.Client) error {
 
 	if err := client.Do(ctx, "ACL", "SAVE").Err(); err != nil {
 		slog.Error("Failed to save ACLs to aclFile", "error", err)
-		return fmt.Errorf("error saving acls to aclFile: %v", err)
+		return fmt.Errorf("saveAclFile: %w", err)
 	}
 	slog.Info("Saved ACLs to aclFile")
 	return nil
@@ -214,7 +214,7 @@ func loadAclFile(ctx context.Context, client *redis.Client) error {
 
 	if err := client.Do(ctx, "ACL", "LOAD").Err(); err != nil {
 		slog.Error("Failed to load ACLs from aclFile", "error", err)
-		return fmt.Errorf("error loading acls from aclFile: %v", err)
+		return fmt.Errorf("loadAclFile: %w", err)
 	}
 	slog.Info("Loaded ACLs from aclFile")
 	return nil
@@ -234,23 +234,23 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 	sourceAcls, err := listAcls(ctx, primary.RedisClient)
 	if err != nil {
 		slog.Error("Failed to list source ACLs", "error", err)
-		return nil, nil, fmt.Errorf("error listing source acls: %v", err)
+		return nil, nil, fmt.Errorf("SyncAcls: error listing source acls: %w", err)
 	}
 
 	if a.aclFile {
 		if err = saveAclFile(ctx, primary.RedisClient); err != nil {
 			slog.Error("Failed to save primary ACLs to aclFile", "error", err)
-			return nil, nil, fmt.Errorf("error saving primary acls to aclFile: %v", err)
+			return nil, nil, fmt.Errorf("SyncAcls: error saving primary acls to aclFile: %w", err)
 		}
 	}
 
 	destinationAcls, err := listAcls(ctx, a.RedisClient)
 	if err != nil {
 		slog.Error("Failed to list current ACLs", "error", err)
-		return nil, nil, fmt.Errorf("error listing current acls: %v", err)
+		return nil, nil, fmt.Errorf("SyncAcls: error listing current acls: %w", err)
 	}
 
-	toUpdate := make(map[string]string, len(sourceAcls))
+	toUpdate := make(map[string]string)
 	for _, acl := range sourceAcls {
 		username := strings.Fields(acl)[1]
 		toUpdate[username] = acl
@@ -271,7 +271,7 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 		slog.Debug("Deleting ACL", "username", username)
 		if err := a.RedisClient.Do(ctx, "ACL", "DELUSER", username).Err(); err != nil {
 			slog.Error("Failed to delete ACL", "username", username, "error", err)
-			return nil, nil, fmt.Errorf("error deleting acl: %v", err)
+			return nil, nil, fmt.Errorf("SyncAcls: error deleting acl: %w", err)
 		}
 		deleted = append(deleted, username)
 	}
@@ -285,7 +285,7 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 		}
 		if err := a.RedisClient.Do(ctx, commandInterface...).Err(); err != nil {
 			slog.Error("Failed to set ACL", "username", username, "error", err)
-			return nil, nil, fmt.Errorf("error setting acl: %v", err)
+			return nil, nil, fmt.Errorf("SyncAcls: error setting acl: %w", err)
 		}
 		updated = append(updated, username)
 	}
@@ -293,11 +293,11 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 	if a.aclFile {
 		if err = saveAclFile(ctx, a.RedisClient); err != nil {
 			slog.Error("Failed to save ACLs to aclFile", "error", err)
-			return nil, nil, fmt.Errorf("error saving acls to aclFile: %v", err)
+			return nil, nil, fmt.Errorf("SyncAcls: error saving acls to aclFile: %w", err)
 		}
 		if err = loadAclFile(ctx, a.RedisClient); err != nil {
 			slog.Error("Failed to load synced ACLs from aclFile", "error", err)
-			return nil, nil, fmt.Errorf("error loading synced acls from aclFile: %v", err)
+			return nil, nil, fmt.Errorf("SyncAcls: error loading synced acls from aclFile: %w", err)
 		}
 	}
 
