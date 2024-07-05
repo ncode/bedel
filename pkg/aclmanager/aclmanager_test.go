@@ -856,3 +856,125 @@ func generateLargeClusterOutput(nodeCount int) string {
 	}
 	return sb.String()
 }
+
+func TestSyncAcls_ACLFileEnabled(t *testing.T) {
+	primaryClient, primaryMock := redismock.NewClientMock()
+	followerClient, followerMock := redismock.NewClientMock()
+
+	aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int), aclFile: true}
+	aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int), aclFile: true}
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl3",
+	})
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetVal("OK")
+
+	updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{"acl2"}, updated)
+	assert.ElementsMatch(t, []string{"acl3"}, deleted)
+}
+
+func TestSyncAcls_SaveACLFileError(t *testing.T) {
+	primaryClient, primaryMock := redismock.NewClientMock()
+	followerClient, followerMock := redismock.NewClientMock()
+
+	aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int), aclFile: true}
+	aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int), aclFile: true}
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl3",
+	})
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetErr(fmt.Errorf("failed to save ACL on primary"))
+
+	_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to save ACL on primary")
+}
+
+func TestSyncAcls_LoadACLFileError(t *testing.T) {
+	primaryClient, primaryMock := redismock.NewClientMock()
+	followerClient, followerMock := redismock.NewClientMock()
+
+	aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int), aclFile: true}
+	aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int), aclFile: true}
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetErr(fmt.Errorf("failed to load ACL on follower"))
+
+	_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to load ACL on follower")
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetErr(fmt.Errorf("failed to save ACL on follower"))
+
+	_, _, err = aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to save ACL on follower")
+}
+
+func TestSyncAcls_ACLFileSync(t *testing.T) {
+	primaryClient, primaryMock := redismock.NewClientMock()
+	followerClient, followerMock := redismock.NewClientMock()
+
+	aclManagerPrimary := &AclManager{RedisClient: primaryClient, nodes: make(map[string]int), aclFile: true}
+	aclManagerFollower := &AclManager{RedisClient: followerClient, nodes: make(map[string]int), aclFile: true}
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2", "user acl3",
+	})
+	followerMock.ExpectDo("ACL", "DELUSER", "acl3").SetVal("OK")
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetVal("OK")
+
+	_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.NoError(t, err)
+
+	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user acl1", "user acl2",
+	})
+
+	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	followerMock.ExpectDo("ACL", "LOAD").SetVal("OK")
+
+	updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+	assert.NoError(t, err)
+	assert.Empty(t, updated)
+	assert.Empty(t, deleted)
+}
