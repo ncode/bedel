@@ -797,3 +797,62 @@ func TestLoadAclFile(t *testing.T) {
 		})
 	}
 }
+
+func TestFindNodes_LargeCluster(t *testing.T) {
+	mockResp := generateLargeClusterOutput(1000) // Generates a mock output for 1000 nodes
+	redisClient, mock := redismock.NewClientMock()
+	mock.ExpectInfo("replication").SetVal(mockResp)
+
+	aclManager := AclManager{RedisClient: redisClient, nodes: make(map[string]int)}
+	ctx := context.Background()
+
+	err := aclManager.findNodes(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, 1000, len(aclManager.nodes))
+}
+
+func TestLoop_ShortInterval(t *testing.T) {
+	viper.Set("syncInterval", 1) // Set a very short sync interval for testing
+	redisClient, mock := redismock.NewClientMock()
+
+	aclManager := &AclManager{
+		Addr:        "localhost:6379",
+		Password:    "password",
+		Username:    "username",
+		RedisClient: redisClient,
+		nodes:       make(map[string]int),
+	}
+
+	mock.ExpectInfo("replication").SetVal(followerOutput)
+	mock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
+		"user default on nopass ~* &* +@all",
+	})
+
+	// Set up a cancellable context to control the loop
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Run Loop in a separate goroutine
+	done := make(chan error, 1)
+	go func() {
+		done <- aclManager.Loop(ctx)
+	}()
+
+	time.Sleep(time.Second * 5) // Run the loop for a few seconds
+
+	// Cancel the context to stop the loop
+	cancel()
+
+	// Check for errors
+	err := <-done
+	assert.NoError(t, err)
+}
+
+func generateLargeClusterOutput(nodeCount int) string {
+	var sb strings.Builder
+	sb.WriteString("# Replication\nrole:master\nconnected_slaves:" + fmt.Sprint(nodeCount) + "\n")
+	for i := 0; i < nodeCount; i++ {
+		sb.WriteString(fmt.Sprintf("slave%d:ip=172.21.0.%d,port=6379,state=online,offset=322,lag=0\n", i, i+3))
+	}
+	return sb.String()
+}
