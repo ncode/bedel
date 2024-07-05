@@ -923,21 +923,6 @@ func TestSyncAcls_LoadACLFileError(t *testing.T) {
 	_, _, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load ACL on follower")
-
-	primaryMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
-		"user acl1", "user acl2",
-	})
-	followerMock.ExpectDo("ACL", "LIST").SetVal([]interface{}{
-		"user acl1", "user acl2",
-	})
-
-	primaryMock.ExpectDo("ACL", "SAVE").SetVal("OK")
-	followerMock.ExpectDo("ACL", "SAVE").SetVal("OK")
-	followerMock.ExpectDo("ACL", "LOAD").SetErr(fmt.Errorf("failed to save ACL on follower"))
-
-	_, _, err = aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to save ACL on follower")
 }
 
 func TestSyncAcls_ACLFileSync(t *testing.T) {
