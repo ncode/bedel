@@ -33,10 +33,11 @@ var (
 
 func TestFindNodes(t *testing.T) {
 	tests := []struct {
-		name          string
-		mockRoleResp  interface{}
-		expectedNodes map[string]int
-		wantErr       bool
+		name           string
+		mockRoleResp   interface{}
+		expectedNodes  map[string]int
+		wantErr        bool
+		expectedErrMsg string
 	}{
 		{
 			name:         "parse primary role output",
@@ -55,21 +56,44 @@ func TestFindNodes(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:         "error on ROLE command",
-			mockRoleResp: nil,
-			wantErr:      true,
+			name:           "ROLE command returns empty result",
+			mockRoleResp:   []interface{}{},
+			expectedNodes:  nil,
+			wantErr:        true,
+			expectedErrMsg: "findNodes: ROLE command returned empty result",
+		},
+		{
+			name: "ROLE command first element not a string",
+			mockRoleResp: []interface{}{
+				int64(12345), // Non-string type explicitly set to int64
+				"some other data",
+			},
+			expectedNodes:  nil,
+			wantErr:        true,
+			expectedErrMsg: "findNodes: unexpected type for role: int64",
+		},
+		{
+			name:           "error on ROLE command",
+			mockRoleResp:   nil, // Simulate Redis error
+			expectedNodes:  nil,
+			wantErr:        true,
+			expectedErrMsg: "findNodes: ROLE command failed",
 		},
 		{
 			name: "unknown role type",
 			mockRoleResp: []interface{}{
 				"sentinel",
 			},
-			wantErr: true,
+			expectedNodes:  nil,
+			wantErr:        true,
+			expectedErrMsg: "findNodes: unknown role type: sentinel",
 		},
 		{
-			name:         "unexpected type for roleInfo",
-			mockRoleResp: "invalid_type",
-			wantErr:      true,
+			name:           "unexpected type for roleInfo",
+			mockRoleResp:   "invalid_type", // Not a slice
+			expectedNodes:  nil,
+			wantErr:        true,
+			expectedErrMsg: "findNodes: unexpected type for roleInfo: string",
 		},
 	}
 
@@ -77,12 +101,16 @@ func TestFindNodes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			redisClient, mock := redismock.NewClientMock()
 
-			if tt.wantErr {
-				mock.ExpectDo("ROLE").SetErr(fmt.Errorf("error"))
+			// Setup the expected ROLE command response
+			if tt.wantErr && tt.mockRoleResp == nil {
+				// Simulate an error from Redis
+				mock.ExpectDo("ROLE").SetErr(fmt.Errorf("findNodes: ROLE command failed"))
 			} else {
+				// Simulate a successful ROLE command with the provided response
 				mock.ExpectDo("ROLE").SetVal(tt.mockRoleResp)
 			}
 
+			// Initialize AclManager with the mocked Redis client
 			aclManager := AclManager{
 				RedisClient: redisClient,
 				nodes:       make(map[string]int),
@@ -90,17 +118,24 @@ func TestFindNodes(t *testing.T) {
 			}
 			ctx := context.Background()
 
+			// Execute the findNodes function
 			err := aclManager.findNodes(ctx)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("findNodes() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
 
-			if !tt.wantErr {
+			// Assert whether an error was expected
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.expectedErrMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrMsg)
+				}
+			} else {
+				assert.NoError(t, err)
 				aclManager.mu.Lock()
 				defer aclManager.mu.Unlock()
 				assert.Equal(t, tt.expectedNodes, aclManager.nodes)
 			}
+
+			// Ensure all expectations were met
+			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
 }
