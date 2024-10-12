@@ -94,7 +94,6 @@ func initConfig() {
 		viper.SetConfigName(".bedel")
 	}
 
-	viper.SetDefault("syncInterval", 10)
 	viper.SetDefault("username", "default")
 	viper.AutomaticEnv()
 
