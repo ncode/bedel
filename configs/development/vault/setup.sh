@@ -5,7 +5,7 @@ set -x
 setup_vault(){
     # Wait for Vault server to be up
     echo "Waiting for Vault to start..."
-    while ! nc -z localhost 8200; do
+    while ! nc -z vault 8200; do
       sleep 1
     done
 
