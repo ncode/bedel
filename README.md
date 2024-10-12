@@ -1,18 +1,34 @@
 # Bedel 
 
-[![Go](https://github.com/ncode/port53/actions/workflows/go.yml/badge.svg)](https://github.com/ncode/port53/actions/workflows/go.yml)
+[![Go](https://github.com/ncode/bedel/actions/workflows/go.yml/badge.svg)](https://github.com/ncode/bedel/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ncode/bedel)](https://goreportcard.com/report/github.com/ncode/bedel)
 [![codecov](https://codecov.io/gh/ncode/bedel/graph/badge.svg?token=N98KAO33K5)](https://codecov.io/gh/ncode/bedel)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-`bedel` is a tool designed to address a specific challenge with Redis: synchronizing users generated outside of the configuration file, such as through the Vault database backend. This utility ensures that Redis ACLs are up-to-date and consistent across all nodes. More info [here](https://github.com/redis/redis/issues/7988).
+`bedel` is a utility designed to synchronize ACLs across multiple nodes in Redis and Redis-compatible databases like Valkey. It specifically addresses the challenge of managing users created outside the traditional configuration file, such as those generated through the [Vault database backend](https://www.vaultproject.io/docs/secrets/databases/redis). By keeping ACLs consistent across all nodes, Bedel ensures seamless user management and enhanced security in distributed environments. For more information on the underlying issue with Redis, see [Redis Issue #7988](https://github.com/redis/redis/issues/7988).
+
+## Table of Contents
+
+- [Features](#features)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Running the Tests](#running-the-tests)
+- [Development Setup](#development-setup)
+  - [Configuration](#configuration)
+- [Usage](#usage)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-- Synchronize Redis users created outside the traditional config file.
-- Integration with Vault database backend for user management.
-- Automated and consistent user synchronization.
-- Easy to deploy and integrate within existing Redis setups.
+
+- Automated User Synchronization: Automatically synchronizes Redis users and ACLs across all nodes to maintain consistency.
+- Vault Integration: Seamlessly integrates with HashiCorp Vault's database backend for dynamic user management.
+- Configurable Sync Intervals: Allows customization of synchronization intervals to suit your deployment needs.
+- Lightweight and Efficient: Designed to have minimal impact on performance, even with thousands of users.
+- Easy Deployment: Simple to deploy with Docker Compose or as a standalone binary.
+- Robust Logging: Provides detailed logs for monitoring and troubleshooting.
 
 ## Getting Started
 
@@ -20,10 +36,15 @@ These instructions will guide you through getting a copy of `bedel` up and runni
 
 ### Prerequisites
 
-- Redis server setup.
+
+For users:
+- Redis server setup
 - Access to Vault database backend (if using Vault for user generation).
-- Go environment for development.
-- Docker and Docker Compose (for development setup).
+
+For developers:
+- Go 1.21 or higher
+- Docker and Docker Compose (for development and testing).
+- Git (for cloning the repository).
 
 ### Installing
 
@@ -34,6 +55,11 @@ Follow these steps to get a development environment running:
 $ git clone https://github.com/ncode/bedel.git
 $ cd bedel
 $ go build
+```
+
+2. Go install:
+```bash
+4 go install github.com/ncode/bedel/cmd/bedel@latest
 ```
 
 ### Running the Tests
@@ -59,7 +85,8 @@ To start the development environment:
 3. Run the following command:
 
 ```bash
-$ docker-compose up -d
+$ cd config/development
+$ make
 ```
 
 This will start all the services defined in the `docker-compose.yaml` file.
@@ -72,22 +99,24 @@ The `docker-compose.yaml` file contains the configuration for all services. Here
 - Bedel instances are configured to connect to their respective Redis instances.
 - The Vault instance is set up with a root token "root" and listens on port 8200.
 
-### Valkey
-
-Valkey is not directly mentioned in the provided files, but it's likely a tool or component related to key management or validation in the context of this project. If you have more information about Valkey, please provide it, and I'll add it to the README.
-
 ## Usage
 
 Bedel can be run in two modes:
 
-1. Run Once:
+### 1. Run Once Mode
+
+Performs a single synchronization of ACLs from the primary Redis node to the replica.
+
 ```bash
 $ bedel runOnce -a <redis-address> -p <password> -u <username>
 ```
 
-2. Continuous Loop:
+### 2. Continuous Loop:
+
+Continuously synchronizes ACLs at a defined interval.
+
 ```bash
-$ bedel run -a <redis-address> -p <password> -u <username>
+$ bedel run -a <redis-address> -p <password> -u <username> --sync-interval <duration>
 ```
 
 For more options and commands, run:
@@ -95,9 +124,24 @@ For more options and commands, run:
 $ bedel --help
 ```
 
+### Configuration file
+
+Bedel can also read configurations from a YAML file (default: $HOME/.bedel.yaml). Command-line options override configurations in the file.
+
+Example Configuration File (~/.bedel.yaml):
+```yaml
+address: localhost:6379
+password: mypassword
+username: default
+syncInterval: 10s
+logLevel: INFO
+aclfile: false
+```
+
+
 ## Contributing
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
+Contributions are welcome!
 
 ## License
 
