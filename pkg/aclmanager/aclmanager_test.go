@@ -32,6 +32,7 @@ var (
 )
 
 func TestFindNodes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		mockRoleResp   interface{}
@@ -141,6 +142,7 @@ func TestFindNodes(t *testing.T) {
 }
 
 func TestListAcls(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		mockResp     interface{}
@@ -215,6 +217,7 @@ func TestListAcls(t *testing.T) {
 }
 
 func TestSyncAcls(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name              string
 		sourceAcls        []interface{}
@@ -463,6 +466,7 @@ func TestSyncAcls(t *testing.T) {
 }
 
 func TestCurrentFunction(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		mockRoleResp interface{}
@@ -586,6 +590,7 @@ func TestPrimary(t *testing.T) {
 }
 
 func TestLoop(t *testing.T) {
+	t.Parallel()
 	redisClient, mock := redismock.NewClientMock()
 	aclManager := &AclManager{
 		RedisClient: redisClient,
@@ -680,6 +685,7 @@ func TestSaveAclFile(t *testing.T) {
 }
 
 func TestLoadAclFile(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		wantErr bool
