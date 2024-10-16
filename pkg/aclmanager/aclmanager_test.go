@@ -364,6 +364,24 @@ func TestSyncAcls(t *testing.T) {
 			name:    "No primary found",
 			wantErr: true,
 		},
+		//{
+		//	name:       "Error: sourceResult not []interface{}",
+		//	sourceAcls: "invalid_type",
+		//	destinationAcls: []interface{}{
+		//		"user acl1 on >password1 ~* +@all",
+		//	},
+		//	wantErr:        true,
+		//	expectedErrMsg: "unexpected result format: string",
+		//},
+		//{
+		//	name: "Error: destinationResult not []interface{}",
+		//	sourceAcls: []interface{}{
+		//		"user acl1 on >password1 ~* +@all",
+		//	},
+		//	destinationAcls: "invalid_type",
+		//	wantErr:         true,
+		//	expectedErrMsg:  "unexpected result format: string",
+		//},
 		{
 			name: "Error: element in sourceAclList not string",
 			sourceAcls: []interface{}{
@@ -385,6 +403,32 @@ func TestSyncAcls(t *testing.T) {
 			},
 			wantErr:        true,
 			expectedErrMsg: "unexpected type for ACL: int",
+		},
+		{
+			name: "Invalid ACL in sourceAcls",
+			sourceAcls: []interface{}{
+				"invalid_acl",                      // Invalid ACL string
+				"user acl1 on >password1 ~* +@all", // Valid ACL
+			},
+			destinationAcls: []interface{}{
+				"user acl2 on >password2 ~* +@all",
+			},
+			expectedDeleted: []string{"acl2"},
+			expectedUpdated: []string{"acl1"},
+			wantErr:         false,
+		},
+		{
+			name: "Invalid ACL in destinationAcls",
+			sourceAcls: []interface{}{
+				"user acl1 on >password1 ~* +@all",
+			},
+			destinationAcls: []interface{}{
+				"invalid_acl", // Invalid ACL string
+				"user acl2 on >password2 ~* +@all",
+			},
+			expectedDeleted: []string{"acl2"}, // acl2 should be deleted
+			expectedUpdated: []string{"acl1"},
+			wantErr:         false,
 		},
 	}
 
