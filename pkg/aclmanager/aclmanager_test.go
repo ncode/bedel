@@ -248,6 +248,7 @@ func TestSyncAcls(t *testing.T) {
 		saveAclError      error
 		loadAclError      error
 		wantErr           bool
+		expectedErrMsg    string
 		aclFile           bool
 	}{
 		{
@@ -363,6 +364,28 @@ func TestSyncAcls(t *testing.T) {
 			name:    "No primary found",
 			wantErr: true,
 		},
+		{
+			name: "Error: element in sourceAclList not string",
+			sourceAcls: []interface{}{
+				12345, // Invalid element
+			},
+			destinationAcls: []interface{}{
+				"user acl1 on >password1 ~* +@all",
+			},
+			wantErr:        true,
+			expectedErrMsg: "unexpected type for ACL: int",
+		},
+		{
+			name: "Error: element in destinationAclList not string",
+			sourceAcls: []interface{}{
+				"user acl1 on >password1 ~* +@all",
+			},
+			destinationAcls: []interface{}{
+				12345, // Invalid element
+			},
+			wantErr:        true,
+			expectedErrMsg: "unexpected type for ACL: int",
+		},
 	}
 
 	for _, tt := range tests {
@@ -399,6 +422,16 @@ func TestSyncAcls(t *testing.T) {
 				destMock.ExpectDo("ACL", "LIST").SetErr(tt.destListAclsErr)
 			} else {
 				destMock.ExpectDo("ACL", "LIST").SetVal(tt.destinationAcls)
+			}
+
+			// If we expect an error due to !ok condition, we can run the function now
+			if tt.wantErr && tt.expectedErrMsg != "" {
+				updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+				assert.Error(t, err)
+				assert.Nil(t, updated)
+				assert.Nil(t, deleted)
+				assert.Contains(t, err.Error(), tt.expectedErrMsg)
+				return
 			}
 
 			// Add this line to allow matching expectations in any order
@@ -471,9 +504,13 @@ func TestSyncAcls(t *testing.T) {
 				}
 			}
 
+			// Run SyncAcls
 			updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
 			if tt.wantErr {
 				assert.Error(t, err)
+				if tt.expectedErrMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrMsg)
+				}
 			} else {
 				assert.NoError(t, err)
 				assert.ElementsMatch(t, tt.expectedUpdated, updated)
