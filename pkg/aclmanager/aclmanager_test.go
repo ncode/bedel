@@ -144,10 +144,11 @@ func TestFindNodes(t *testing.T) {
 func TestListAcls(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name         string
-		mockResp     interface{}
-		expectedAcls []string
-		wantErr      bool
+		name           string
+		mockResp       interface{}
+		expectedAcls   []string
+		wantErr        bool
+		expectedErrMsg string
 	}{
 		{
 			name: "valid ACL list",
@@ -168,27 +169,33 @@ func TestListAcls(t *testing.T) {
 			wantErr:      false,
 		},
 		{
-			name:     "error from Redis client",
-			mockResp: nil,
-			wantErr:  true,
+			name:           "error from Redis client",
+			mockResp:       nil,
+			wantErr:        true,
+			expectedErrMsg: "error",
 		},
 		{
-			name: "non-string elements in ACL list",
+			name: "aclList contains non-string element",
 			mockResp: []interface{}{
 				"user default on nopass ~* &* +@all",
-				123, // Invalid element
+				map[string]interface{}{
+					"unexpected": "data",
+				},
 			},
-			wantErr: true,
+			wantErr:        true,
+			expectedErrMsg: "unexpected type for ACL: map[string]interface {}",
 		},
 		{
-			name:     "unexpected result type",
-			mockResp: "invalid_type",
-			wantErr:  true,
+			name:           "result is not []interface{}",
+			mockResp:       "invalid_type",
+			wantErr:        true,
+			expectedErrMsg: "unexpected result format: string",
 		},
 		{
-			name:     "nil response",
-			mockResp: nil,
-			wantErr:  true,
+			name:           "nil response",
+			mockResp:       nil,
+			wantErr:        true,
+			expectedErrMsg: "error",
 		},
 	}
 
@@ -196,9 +203,11 @@ func TestListAcls(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			redisClient, mock := redismock.NewClientMock()
 
-			if tt.wantErr {
+			if tt.wantErr && tt.mockResp == nil && tt.expectedErrMsg == "error" {
+				// Simulate an error from Redis
 				mock.ExpectDo("ACL", "LIST").SetErr(fmt.Errorf("error"))
 			} else {
+				// Simulate a successful ACL LIST command with the provided response
 				mock.ExpectDo("ACL", "LIST").SetVal(tt.mockResp)
 			}
 
@@ -209,9 +218,18 @@ func TestListAcls(t *testing.T) {
 				return
 			}
 
-			if !tt.wantErr {
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.expectedErrMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrMsg)
+				}
+			} else {
+				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedAcls, acls)
 			}
+
+			// Ensure all expectations were met
+			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
 }
