@@ -332,8 +332,8 @@ func TestSyncAcls(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name              string
-		sourceAcls        []interface{}
-		destinationAcls   []interface{}
+		sourceAcls        interface{}
+		destinationAcls   interface{}
 		expectedDeleted   []string
 		expectedUpdated   []string
 		sourceListAclsErr error
@@ -378,11 +378,16 @@ func TestSyncAcls(t *testing.T) {
 			name:              "Error listing source ACLs",
 			sourceListAclsErr: fmt.Errorf("error listing source ACLs"),
 			wantErr:           true,
+			expectedErrMsg:    "SyncAcls: error listing source ACLs",
+			aclFile:           false,
 		},
 		{
 			name:            "Error listing destination ACLs",
+			sourceAcls:      []interface{}{}, // Set to empty slice to prevent panic
 			destListAclsErr: fmt.Errorf("error listing destination ACLs"),
 			wantErr:         true,
+			expectedErrMsg:  "SyncAcls: error listing destination ACLs",
+			aclFile:         false,
 		},
 		{
 			name: "Error deleting ACL",
@@ -393,8 +398,12 @@ func TestSyncAcls(t *testing.T) {
 				"user acl1 on >password1 ~* +@all",
 				"user acl3 on >password3 ~* +@all",
 			},
-			redisDoError: fmt.Errorf("error deleting ACL"),
-			wantErr:      true,
+			expectedDeleted: []string{"acl3"},
+			expectedUpdated: []string{},
+			redisDoError:    fmt.Errorf("error deleting ACL"), // Simulate error only on deletion
+			wantErr:         true,
+			expectedErrMsg:  "SyncAcls: error executing pipeline",
+			aclFile:         false,
 		},
 		{
 			name: "Error setting ACL",
@@ -405,8 +414,12 @@ func TestSyncAcls(t *testing.T) {
 			destinationAcls: []interface{}{
 				"user acl1 on >password1 ~* +@all",
 			},
-			redisDoError: fmt.Errorf("error setting ACL"),
-			wantErr:      true,
+			expectedDeleted: []string{},
+			expectedUpdated: []string{"acl2"},
+			redisDoError:    fmt.Errorf("error setting ACL"),
+			wantErr:         true,
+			expectedErrMsg:  "SyncAcls: error executing pipeline",
+			aclFile:         false,
 		},
 		{
 			name: "ACLs synced with ACL file enabled",
@@ -428,18 +441,33 @@ func TestSyncAcls(t *testing.T) {
 			sourceAcls: []interface{}{
 				"user acl1 on >password1 ~* +@all",
 			},
-			aclFile:      true,
-			saveAclError: fmt.Errorf("error saving ACL file"),
-			wantErr:      true,
+			destinationAcls: []interface{}{
+				"user acl1 on >password1 ~* +@all",
+				"user acl3 on >password3 ~* +@all",
+			},
+			expectedDeleted: []string{"acl3"},
+			expectedUpdated: []string{},
+			aclFile:         true,
+			saveAclError:    fmt.Errorf("error saving ACL file"),
+			wantErr:         true,
+			expectedErrMsg:  "SyncAcls: error saving ACLs to aclFile",
 		},
 		{
 			name: "Error loading ACL file",
 			sourceAcls: []interface{}{
 				"user acl1 on >password1 ~* +@all",
+				"user acl2 on >password2 ~* +@all", // Added acl2
 			},
-			aclFile:      true,
-			loadAclError: fmt.Errorf("error loading ACL file"),
-			wantErr:      true,
+			destinationAcls: []interface{}{
+				"user acl1 on >password1 ~* +@all",
+				"user acl3 on >password3 ~* +@all",
+			},
+			expectedDeleted: []string{"acl3"},
+			expectedUpdated: []string{"acl2"},
+			aclFile:         true,
+			loadAclError:    fmt.Errorf("error loading ACL file"),
+			wantErr:         true,
+			expectedErrMsg:  "SyncAcls: error loading ACLs from aclFile",
 		},
 		{
 			name: "No ACLs to update",
@@ -455,27 +483,11 @@ func TestSyncAcls(t *testing.T) {
 			wantErr:         false,
 		},
 		{
-			name:    "No primary found",
-			wantErr: true,
+			name:           "No primary found",
+			wantErr:        true,
+			expectedErrMsg: "no primary found",
+			aclFile:        false,
 		},
-		//{
-		//	name:       "Error: sourceResult not []interface{}",
-		//	sourceAcls: "invalid_type",
-		//	destinationAcls: []interface{}{
-		//		"user acl1 on >password1 ~* +@all",
-		//	},
-		//	wantErr:        true,
-		//	expectedErrMsg: "unexpected result format: string",
-		//},
-		//{
-		//	name: "Error: destinationResult not []interface{}",
-		//	sourceAcls: []interface{}{
-		//		"user acl1 on >password1 ~* +@all",
-		//	},
-		//	destinationAcls: "invalid_type",
-		//	wantErr:         true,
-		//	expectedErrMsg:  "unexpected result format: string",
-		//},
 		{
 			name: "Error: element in sourceAclList not string",
 			sourceAcls: []interface{}{
@@ -486,6 +498,7 @@ func TestSyncAcls(t *testing.T) {
 			},
 			wantErr:        true,
 			expectedErrMsg: "unexpected type for ACL: int",
+			aclFile:        false,
 		},
 		{
 			name: "Error: element in destinationAclList not string",
@@ -497,6 +510,7 @@ func TestSyncAcls(t *testing.T) {
 			},
 			wantErr:        true,
 			expectedErrMsg: "unexpected type for ACL: int",
+			aclFile:        false,
 		},
 		{
 			name: "Invalid ACL in sourceAcls",
@@ -509,6 +523,7 @@ func TestSyncAcls(t *testing.T) {
 			},
 			expectedDeleted: []string{"acl2"},
 			expectedUpdated: []string{"acl1"},
+			aclFile:         false,
 			wantErr:         false,
 		},
 		{
@@ -522,6 +537,7 @@ func TestSyncAcls(t *testing.T) {
 			},
 			expectedDeleted: []string{"acl2"}, // acl2 should be deleted
 			expectedUpdated: []string{"acl1"},
+			aclFile:         false,
 			wantErr:         false,
 		},
 	}
@@ -542,29 +558,10 @@ func TestSyncAcls(t *testing.T) {
 				aclFile:     tt.aclFile,
 			}
 
+			// Handle "No primary found" separately
 			if tt.name == "No primary found" {
+				// No ACL LIST commands should be called
 				updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), nil)
-				assert.Error(t, err)
-				assert.Nil(t, updated)
-				assert.Nil(t, deleted)
-				return
-			}
-
-			if tt.sourceListAclsErr != nil {
-				sourceMock.ExpectDo("ACL", "LIST").SetErr(tt.sourceListAclsErr)
-			} else {
-				sourceMock.ExpectDo("ACL", "LIST").SetVal(tt.sourceAcls)
-			}
-
-			if tt.destListAclsErr != nil {
-				destMock.ExpectDo("ACL", "LIST").SetErr(tt.destListAclsErr)
-			} else {
-				destMock.ExpectDo("ACL", "LIST").SetVal(tt.destinationAcls)
-			}
-
-			// If we expect an error due to !ok condition, we can run the function now
-			if tt.wantErr && tt.expectedErrMsg != "" {
-				updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
 				assert.Error(t, err)
 				assert.Nil(t, updated)
 				assert.Nil(t, deleted)
@@ -572,73 +569,92 @@ func TestSyncAcls(t *testing.T) {
 				return
 			}
 
-			// Add this line to allow matching expectations in any order
-			destMock.MatchExpectationsInOrder(false)
+			if tt.name == "Error: element in sourceAclList not string" {
+				// Set up source ACL LIST expectation
+				expectACLList(sourceMock, tt.sourceAcls, tt.sourceListAclsErr)
 
-			if tt.aclFile {
-				if tt.saveAclError != nil {
-					sourceMock.ExpectDo("ACL", "SAVE").SetErr(tt.saveAclError)
-					destMock.ExpectDo("ACL", "SAVE").SetVal("OK")
-					destMock.ExpectDo("ACL", "LOAD").SetVal("OK")
-				} else {
-					sourceMock.ExpectDo("ACL", "SAVE").SetVal("OK")
-					destMock.ExpectDo("ACL", "SAVE").SetVal("OK")
-					if tt.loadAclError != nil {
-						destMock.ExpectDo("ACL", "LOAD").SetErr(tt.loadAclError)
-					} else {
-						destMock.ExpectDo("ACL", "LOAD").SetVal("OK")
-					}
+				// Run SyncAcls and assert the expected error
+				updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+				assert.Error(t, err)
+				assert.Nil(t, updated)
+				assert.Nil(t, deleted)
+				if tt.expectedErrMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrMsg)
 				}
+
+				// Ensure all expectations were met
+				assert.NoError(t, sourceMock.ExpectationsWereMet())
+				return
 			}
 
-			if tt.redisDoError != nil {
-				destMock.ExpectDo("ACL", "DELUSER", "acl3").SetErr(tt.redisDoError)
-				// For setting ACLs, we need to construct the command with proper arguments
-				for _, username := range tt.expectedUpdated {
-					args := []interface{}{"ACL", "SETUSER"}
+			// Setup source ACL LIST expectation
+			expectACLList(sourceMock, tt.sourceAcls, tt.sourceListAclsErr)
 
-					// Find the ACL line for the username
-					var aclStr string
-					for _, acl := range tt.sourceAcls {
-						aclString, _ := acl.(string)
-						if strings.Contains(aclString, "user "+username+" ") {
-							aclStr = aclString
-							break
-						}
+			// Setup destination ACL LIST expectation only if no source ACL error
+			if tt.sourceListAclsErr == nil {
+				expectACLList(destMock, tt.destinationAcls, tt.destListAclsErr)
+			}
+
+			// If there is an error during ACL listing, we expect SyncAcls to return early
+			if tt.sourceListAclsErr != nil || tt.destListAclsErr != nil {
+				// Run SyncAcls
+				updated, deleted, err := aclManagerFollower.SyncAcls(context.Background(), aclManagerPrimary)
+				if tt.wantErr {
+					assert.Error(t, err)
+					assert.Nil(t, updated)
+					assert.Nil(t, deleted)
+					if tt.expectedErrMsg != "" {
+						assert.Contains(t, err.Error(), tt.expectedErrMsg)
 					}
-
-					fields := strings.Fields(aclStr)
-					// Skip the "user" keyword and convert fields[1:] to []interface{}
-					for _, field := range fields[1:] {
-						args = append(args, field)
-					}
-
-					destMock.ExpectDo(args...).SetErr(tt.redisDoError)
+				} else {
+					assert.NoError(t, err)
+					assert.ElementsMatch(t, tt.expectedUpdated, updated)
+					assert.ElementsMatch(t, tt.expectedDeleted, deleted)
 				}
-			} else {
-				for _, username := range tt.expectedDeleted {
-					destMock.ExpectDo("ACL", "DELUSER", username).SetVal("OK")
+
+				// Ensure all expectations were met
+				assert.NoError(t, sourceMock.ExpectationsWereMet())
+				assert.NoError(t, destMock.ExpectationsWereMet())
+				return
+			}
+
+			// Setup expected ACL DELUSER and ACL SETUSER commands
+			for _, username := range tt.expectedDeleted {
+				expectACLDelUser(destMock, username, tt.redisDoError)
+			}
+
+			for _, username := range tt.expectedUpdated {
+				// Find the ACL string for the username
+				var aclStr string
+				for _, acl := range tt.sourceAcls.([]interface{}) {
+					aclString, ok := acl.(string)
+					if !ok {
+						continue
+					}
+					if strings.Contains(aclString, "user "+username+" ") {
+						aclStr = aclString
+						break
+					}
 				}
-				for _, username := range tt.expectedUpdated {
-					args := []interface{}{"ACL", "SETUSER"}
 
-					// Find the ACL line for the username
-					var aclStr string
-					for _, acl := range tt.sourceAcls {
-						aclString, _ := acl.(string)
-						if strings.Contains(aclString, "user "+username+" ") {
-							aclStr = aclString
-							break
-						}
+				if aclStr == "" {
+					t.Fatalf("No ACL string found for user '%s'", username)
+				}
+
+				expectACLSetUser(destMock, aclStr, tt.redisDoError)
+			}
+
+			// Setup ACL SAVE and LOAD on destMock if aclFile is enabled
+			if tt.aclFile {
+				if tt.saveAclError != nil {
+					expectACLSave(destMock, tt.saveAclError)
+				} else {
+					expectACLSave(destMock, nil)
+					if tt.loadAclError != nil {
+						expectACLLoad(destMock, tt.loadAclError)
+					} else {
+						expectACLLoad(destMock, nil)
 					}
-
-					fields := strings.Fields(aclStr)
-					// Skip the "user" keyword and convert fields[1:] to []interface{}
-					for _, field := range fields[1:] {
-						args = append(args, field)
-					}
-
-					destMock.ExpectDo(args...).SetVal("OK")
 				}
 			}
 
@@ -654,7 +670,70 @@ func TestSyncAcls(t *testing.T) {
 				assert.ElementsMatch(t, tt.expectedUpdated, updated)
 				assert.ElementsMatch(t, tt.expectedDeleted, deleted)
 			}
+
+			// Ensure all expectations were met
+			assert.NoError(t, sourceMock.ExpectationsWereMet())
+			assert.NoError(t, destMock.ExpectationsWereMet())
 		})
+	}
+}
+
+// expectACLList sets up the expectation for the ACL LIST command.
+// If err is not nil, it simulates an error; otherwise, it returns the provided ACL list.
+func expectACLList(mock redismock.ClientMock, acls interface{}, err error) {
+	if err != nil {
+		mock.ExpectDo("ACL", "LIST").SetErr(err)
+	} else {
+		if acls == nil {
+			acls = []interface{}{}
+		}
+		mock.ExpectDo("ACL", "LIST").SetVal(acls)
+	}
+}
+
+// expectACLDelUser sets up the expectation for the ACL DELUSER command.
+// If err is not nil, it simulates an error; otherwise, it returns "OK".
+func expectACLDelUser(mock redismock.ClientMock, username string, err error) {
+	if err != nil {
+		mock.ExpectDo("ACL", "DELUSER", username).SetErr(err)
+	} else {
+		mock.ExpectDo("ACL", "DELUSER", username).SetVal("OK")
+	}
+}
+
+// expectACLSetUser sets up the expectation for the ACL SETUSER command.
+// If err is not nil, it simulates an error; otherwise, it returns "OK".
+func expectACLSetUser(mock redismock.ClientMock, aclStr string, err error) {
+	fields := strings.Fields(aclStr)
+	args := []interface{}{"ACL", "SETUSER"}
+	for _, field := range fields[1:] { // Skip the "user" keyword
+		args = append(args, field)
+	}
+
+	if err != nil {
+		mock.ExpectDo(args...).SetErr(err)
+	} else {
+		mock.ExpectDo(args...).SetVal("OK")
+	}
+}
+
+// expectACLSave sets up the expectation for the ACL SAVE command.
+// If err is not nil, it simulates an error; otherwise, it returns "OK".
+func expectACLSave(mock redismock.ClientMock, err error) {
+	if err != nil {
+		mock.ExpectDo("ACL", "SAVE").SetErr(err)
+	} else {
+		mock.ExpectDo("ACL", "SAVE").SetVal("OK")
+	}
+}
+
+// expectACLLoad sets up the expectation for the ACL LOAD command.
+// If err is not nil, it simulates an error; otherwise, it returns "OK".
+func expectACLLoad(mock redismock.ClientMock, err error) {
+	if err != nil {
+		mock.ExpectDo("ACL", "LOAD").SetErr(err)
+	} else {
+		mock.ExpectDo("ACL", "LOAD").SetVal("OK")
 	}
 }
 
