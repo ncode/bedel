@@ -232,6 +232,48 @@ func hashString(s string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+// listAndMapAcls is an auxiliary function to list ACLs and create a map of username to hash and ACL string
+func listAndMapAcls(ctx context.Context, client *redis.Client) (map[string]string, map[string]string, error) {
+	slog.Debug("Entering listAndMapAcls")
+	defer slog.Debug("Exiting listAndMapAcls")
+
+	result, err := client.Do(ctx, "ACL", "LIST").Result()
+	if err != nil {
+		slog.Error("Failed to list ACLs", "error", err)
+		return nil, nil, fmt.Errorf("listAndMapAcls: error listing ACLs: %w", err)
+	}
+
+	aclList, ok := result.([]interface{})
+	if !ok {
+		err := fmt.Errorf("unexpected result format: %T", result)
+		slog.Error("Unexpected result format", "result", result)
+		return nil, nil, fmt.Errorf("listAndMapAcls: %w", err)
+	}
+
+	aclHashMap := make(map[string]string)
+	aclStrMap := make(map[string]string)
+	for _, acl := range aclList {
+		aclStr, ok := acl.(string)
+		if !ok {
+			err := fmt.Errorf("unexpected type for ACL: %T", acl)
+			slog.Error("Unexpected type for ACL", "acl", acl)
+			return nil, nil, fmt.Errorf("listAndMapAcls: %w", err)
+		}
+		fields := strings.Fields(aclStr)
+		if len(fields) < 2 {
+			slog.Warn("Invalid ACL format", "acl", aclStr)
+			continue
+		}
+		username := fields[1]
+		hash := hashString(aclStr)
+		aclHashMap[username] = hash
+		aclStrMap[username] = aclStr
+	}
+
+	slog.Info("Listed and mapped ACLs", "count", len(aclHashMap))
+	return aclHashMap, aclStrMap, nil
+}
+
 // SyncAcls connects to the primary node and syncs the ACLs to the current node
 func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]string, []string, error) {
 	slog.Debug("Entering SyncAcls")
@@ -245,78 +287,16 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 
 	const batchSize = 100
 
-	// Map to store username to hash for source ACLs
-	sourceAclMap := make(map[string]string)
-	// Map to store username to ACL string for source ACLs (only for users needing updates)
-	sourceAclStrings := make(map[string]string)
-
 	// Get source ACLs
-	sourceResult, err := primary.RedisClient.Do(ctx, "ACL", "LIST").Result()
+	sourceAclHashMap, sourceAclStrMap, err := listAndMapAcls(ctx, primary.RedisClient)
 	if err != nil {
-		slog.Error("Failed to list source ACLs", "error", err)
 		return nil, nil, fmt.Errorf("SyncAcls: error listing source ACLs: %w", err)
 	}
 
-	sourceAclList, ok := sourceResult.([]interface{})
-	if !ok {
-		err := fmt.Errorf("unexpected result format: %T", sourceResult)
-		slog.Error("Unexpected result format", "result", sourceResult)
-		return nil, nil, fmt.Errorf("listAcls: %w", err)
-	}
-
-	// Process source ACLs
-	for _, acl := range sourceAclList {
-		aclStr, ok := acl.(string)
-		if !ok {
-			err := fmt.Errorf("unexpected type for ACL: %T", acl)
-			slog.Error("Unexpected type for ACL", "acl", acl)
-			return nil, nil, fmt.Errorf("listAcls: %w", err)
-		}
-		fields := strings.Fields(aclStr)
-		if len(fields) < 2 {
-			slog.Warn("Invalid ACL format", "acl", aclStr)
-			continue
-		}
-		username := fields[1]
-		hash := hashString(aclStr)
-		sourceAclMap[username] = hash
-		// Store the ACL string for potential updates
-		sourceAclStrings[username] = aclStr
-	}
-
-	// Map to store username to hash for destination ACLs
-	destinationAclMap := make(map[string]string)
-
 	// Get destination ACLs
-	destinationResult, err := a.RedisClient.Do(ctx, "ACL", "LIST").Result()
+	destinationAclHashMap, _, err := listAndMapAcls(ctx, a.RedisClient)
 	if err != nil {
-		slog.Error("Failed to list destination ACLs", "error", err)
 		return nil, nil, fmt.Errorf("SyncAcls: error listing destination ACLs: %w", err)
-	}
-
-	destinationAclList, ok := destinationResult.([]interface{})
-	if !ok {
-		err := fmt.Errorf("unexpected result format: %T", destinationResult)
-		slog.Error("Unexpected result format", "result", destinationResult)
-		return nil, nil, fmt.Errorf("listAcls: %w", err)
-	}
-
-	// Process destination ACLs
-	for _, acl := range destinationAclList {
-		aclStr, ok := acl.(string)
-		if !ok {
-			err := fmt.Errorf("unexpected type for ACL: %T", acl)
-			slog.Error("Unexpected type for ACL", "acl", acl)
-			return nil, nil, fmt.Errorf("listAcls: %w", err)
-		}
-		fields := strings.Fields(aclStr)
-		if len(fields) < 2 {
-			slog.Warn("Invalid ACL format", "acl", aclStr)
-			continue
-		}
-		username := fields[1]
-		hash := hashString(aclStr)
-		destinationAclMap[username] = hash
 	}
 
 	var updated, deleted []string
@@ -326,8 +306,8 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 	pipe := a.RedisClient.Pipeline()
 
 	// Delete ACLs that are not in the source
-	for username := range destinationAclMap {
-		if _, found := sourceAclMap[username]; !found && username != "default" {
+	for username := range destinationAclHashMap {
+		if _, found := sourceAclHashMap[username]; !found && username != "default" {
 			slog.Debug("Deleting ACL", "username", username)
 			cmd := pipe.Do(ctx, "ACL", "DELUSER", username)
 			cmds = append(cmds, cmd)
@@ -346,39 +326,36 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 	}
 
 	// Add or update ACLs from the source
-	for username, sourceHash := range sourceAclMap {
-		destHash, found := destinationAclMap[username]
-		if found && destHash == sourceHash {
-			// ACL is already up-to-date
-			continue
-		}
-
-		aclStr := sourceAclStrings[username]
-		if aclStr == "" {
-			slog.Error("ACL string not found for user", "username", username)
-			continue
-		}
-
-		args := []interface{}{"ACL", "SETUSER"}
-		fields := strings.Fields(aclStr)
-		// Skip the "user" keyword
-		for _, field := range fields[1:] {
-			args = append(args, field)
-		}
-
-		cmd := pipe.Do(ctx, args...)
-		cmds = append(cmds, cmd)
-		updated = append(updated, username)
-
-		if len(cmds) >= batchSize {
-			// Execute pipeline
-			if _, err = pipe.Exec(ctx); err != nil {
-				slog.Error("Failed to execute pipeline", "error", err)
-				return nil, nil, fmt.Errorf("SyncAcls: error executing pipeline: %w", err)
+	for username, sourceHash := range sourceAclHashMap {
+		destHash, found := destinationAclHashMap[username]
+		if !found || destHash != sourceHash {
+			aclStr := sourceAclStrMap[username]
+			if aclStr == "" {
+				slog.Error("ACL string not found for user", "username", username)
+				continue
 			}
-			// Reset pipeline and cmds
-			pipe = a.RedisClient.Pipeline()
-			cmds = cmds[:0]
+
+			args := []interface{}{"ACL", "SETUSER"}
+			fields := strings.Fields(aclStr)
+			// Skip the "user" keyword
+			for _, field := range fields[1:] {
+				args = append(args, field)
+			}
+
+			cmd := pipe.Do(ctx, args...)
+			cmds = append(cmds, cmd)
+			updated = append(updated, username)
+
+			if len(cmds) >= batchSize {
+				// Execute pipeline
+				if _, err = pipe.Exec(ctx); err != nil {
+					slog.Error("Failed to execute pipeline", "error", err)
+					return nil, nil, fmt.Errorf("SyncAcls: error executing pipeline: %w", err)
+				}
+				// Reset pipeline and cmds
+				pipe = a.RedisClient.Pipeline()
+				cmds = cmds[:0]
+			}
 		}
 	}
 

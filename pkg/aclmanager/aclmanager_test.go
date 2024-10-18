@@ -234,6 +234,100 @@ func TestListAcls(t *testing.T) {
 	}
 }
 
+func TestListAndMapAcls(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		mockResp        interface{}
+		expectedHashMap map[string]string
+		expectedStrMap  map[string]string
+		wantErr         bool
+		expectedErrMsg  string
+	}{
+		{
+			name: "valid ACL list",
+			mockResp: []interface{}{
+				"user default on nopass ~* &* +@all",
+				"user alice on >password ~keys:* -@all +get +set +del",
+			},
+			expectedHashMap: map[string]string{
+				"default": hashString("user default on nopass ~* &* +@all"),
+				"alice":   hashString("user alice on >password ~keys:* -@all +get +set +del"),
+			},
+			expectedStrMap: map[string]string{
+				"default": "user default on nopass ~* &* +@all",
+				"alice":   "user alice on >password ~keys:* -@all +get +set +del",
+			},
+			wantErr: false,
+		},
+		{
+			name:            "empty ACL list",
+			mockResp:        []interface{}{},
+			expectedHashMap: map[string]string{},
+			expectedStrMap:  map[string]string{},
+			wantErr:         false,
+		},
+		{
+			name:           "error from Redis client",
+			mockResp:       nil,
+			wantErr:        true,
+			expectedErrMsg: "error listing ACLs",
+		},
+		{
+			name: "invalid ACL format",
+			mockResp: []interface{}{
+				"invalid_acl",
+				"user alice on >password ~keys:* -@all +get +set +del",
+			},
+			expectedHashMap: map[string]string{
+				"alice": hashString("user alice on >password ~keys:* -@all +get +set +del"),
+			},
+			expectedStrMap: map[string]string{
+				"alice": "user alice on >password ~keys:* -@all +get +set +del",
+			},
+			wantErr: false,
+		},
+		{
+			name:           "result is not []interface{}",
+			mockResp:       "invalid_type",
+			wantErr:        true,
+			expectedErrMsg: "unexpected result format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			redisClient, mock := redismock.NewClientMock()
+
+			if tt.wantErr && tt.mockResp == nil {
+				mock.ExpectDo("ACL", "LIST").SetErr(fmt.Errorf("error"))
+			} else {
+				mock.ExpectDo("ACL", "LIST").SetVal(tt.mockResp)
+			}
+
+			aclHashMap, aclStrMap, err := listAndMapAcls(context.Background(), redisClient)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("listAndMapAcls() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.expectedErrMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedHashMap, aclHashMap)
+				assert.Equal(t, tt.expectedStrMap, aclStrMap)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestSyncAcls(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
