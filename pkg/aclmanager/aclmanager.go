@@ -30,6 +30,7 @@ type AclManager struct {
 	nodes       map[string]int
 	mu          sync.Mutex // Mutex to protect nodes map
 	aclFile     bool
+	batchSize   int
 }
 
 // New creates a new AclManager
@@ -47,7 +48,15 @@ func New(addr string, username string, password string, aclfile bool) *AclManage
 		RedisClient: redisClient,
 		nodes:       make(map[string]int),
 		aclFile:     aclfile,
+		batchSize:   100,
 	}
+}
+
+// SetBatchSize sets the batch size for syncing ACLs
+func (a *AclManager) SetBatchSize(size int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.batchSize = size
 }
 
 // findNodes returns a list of nodes in the cluster based on the redis ROLE command
@@ -285,8 +294,6 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 		return nil, nil, err
 	}
 
-	const batchSize = 100
-
 	// Get source ACLs
 	sourceAclHashMap, sourceAclStrMap, err := listAndMapAcls(ctx, primary.RedisClient)
 	if err != nil {
@@ -302,7 +309,7 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 	var updated, deleted []string
 
 	// Batch commands
-	cmds := make([]redis.Cmder, 0, batchSize)
+	cmds := make([]redis.Cmder, 0, a.batchSize)
 	pipe := a.RedisClient.Pipeline()
 
 	// Delete ACLs that are not in the source
@@ -312,7 +319,7 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 			cmd := pipe.Do(ctx, "ACL", "DELUSER", username)
 			cmds = append(cmds, cmd)
 			deleted = append(deleted, username)
-			if len(cmds) >= batchSize {
+			if len(cmds) >= a.batchSize {
 				// Execute pipeline
 				if _, err = pipe.Exec(ctx); err != nil {
 					slog.Error("Failed to execute pipeline", "error", err)
@@ -346,7 +353,7 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 			cmds = append(cmds, cmd)
 			updated = append(updated, username)
 
-			if len(cmds) >= batchSize {
+			if len(cmds) >= a.batchSize {
 				// Execute pipeline
 				if _, err = pipe.Exec(ctx); err != nil {
 					slog.Error("Failed to execute pipeline", "error", err)

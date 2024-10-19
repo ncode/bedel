@@ -994,3 +994,56 @@ func TestLoadAclFile(t *testing.T) {
 		})
 	}
 }
+
+func TestHashString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		},
+		{
+			name:     "non-empty string",
+			input:    "hello world",
+			expected: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hash := hashString(tt.input)
+			assert.Equal(t, tt.expected, hash)
+		})
+	}
+}
+
+func TestSetBatchSize(t *testing.T) {
+	tests := []struct {
+		name         string
+		batchSize    int
+		expectedSize int
+	}{
+		{
+			name:         "default batch size",
+			batchSize:    0,
+			expectedSize: 0,
+		},
+		{
+			name:         "custom batch size",
+			batchSize:    10,
+			expectedSize: 10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aclManager := &AclManager{}
+			aclManager.SetBatchSize(tt.batchSize)
+			assert.Equal(t, tt.expectedSize, aclManager.batchSize)
+		})
+	}
+}
