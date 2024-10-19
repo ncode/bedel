@@ -16,6 +16,11 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/ncode/bedel/pkg/aclmanager"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -27,11 +32,26 @@ var runCmd = &cobra.Command{
 	Short: "Run the acl manager in mood loop, it will sync the follower with the primary",
 	Run: func(cmd *cobra.Command, args []string) {
 		mgr := aclmanager.New(viper.GetString("address"), viper.GetString("username"), viper.GetString("password"), viper.GetBool("aclfile"))
-		ctx := cmd.Context()
-		err := mgr.Loop(ctx)
+		defer mgr.Close()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Set up signal handling
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-c
+			cancel()
+		}()
+
+		syncInterval := viper.GetDuration("syncInterval")
+		logger.Info("Starting ACL manager loop")
+		err := mgr.Loop(ctx, syncInterval)
 		if err != nil {
-			panic(err)
+			logger.Error("Error running ACL manager loop", "error", err)
+			os.Exit(1)
 		}
+		logger.Info("ACL manager loop terminated")
 	},
 }
 

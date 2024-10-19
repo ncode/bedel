@@ -16,12 +16,12 @@ limitations under the License.
 package cmd
 
 import (
-	"github.com/ncode/bedel/pkg/aclmanager"
-	"github.com/spf13/viper"
 	"log/slog"
 	"os"
 
+	"github.com/ncode/bedel/pkg/aclmanager"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // runOnceCmd represents the runOnce command
@@ -30,22 +30,23 @@ var runOnceCmd = &cobra.Command{
 	Short: "Run the acl manager once, it will sync the follower with the primary",
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
-		aclManager := aclmanager.New(viper.GetString("address"), viper.GetString("username"), viper.GetString("password"), viper.GetBool("aclfile"))
-		function, err := aclManager.CurrentFunction(ctx)
+		mgr := aclmanager.New(viper.GetString("address"), viper.GetString("username"), viper.GetString("password"), viper.GetBool("aclfile"))
+		defer mgr.Close()
+		function, err := mgr.CurrentFunction(ctx)
 		if err != nil {
-			slog.Warn("unable to check if it's a Primary", "message", err)
+			slog.Error("Unable to check if node is primary", "error", err)
 			os.Exit(1)
 		}
 		if function == aclmanager.Follower {
-			primary, err := aclManager.Primary(ctx)
+			primary, err := mgr.Primary(ctx)
 			if err != nil {
-				slog.Warn("unable to find Primary", "message", err)
+				slog.Error("Unable to find Primary", "message", err)
 				os.Exit(1)
 			}
 			var added, deleted []string
-			added, deleted, err = aclManager.SyncAcls(ctx, primary)
+			added, deleted, err = mgr.SyncAcls(ctx, primary)
 			if err != nil {
-				slog.Warn("unable to sync acls from Primary", "message", err)
+				slog.Error("Unable to sync acls from Primary", "message", err)
 				os.Exit(1)
 			}
 			slog.Info("Synced acls from Primary", "added", added, "deleted", deleted)

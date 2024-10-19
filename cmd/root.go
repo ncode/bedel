@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -63,7 +64,7 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.bedel.yaml)")
-	rootCmd.PersistentFlags().StringP("address", "a", "", "address of the slave to manage instance eg: 127.0.0.1:6379")
+	rootCmd.PersistentFlags().StringP("address", "a", "", "address of the instance to manage, e.g., 127.0.0.1:6379")
 	viper.BindPFlag("address", rootCmd.PersistentFlags().Lookup("address"))
 	rootCmd.PersistentFlags().StringP("password", "p", "", "password to manage acls")
 	viper.BindPFlag("password", rootCmd.PersistentFlags().Lookup("password"))
@@ -73,6 +74,8 @@ func init() {
 	viper.BindPFlag("logLevel", rootCmd.PersistentFlags().Lookup("logLevel"))
 	rootCmd.PersistentFlags().Bool("aclfile", false, "defined if we should use the aclfile to sync acls")
 	viper.BindPFlag("aclfile", rootCmd.PersistentFlags().Lookup("aclfile"))
+	rootCmd.PersistentFlags().Duration("syncInterval", 10*time.Second, "interval between sync operations")
+	viper.BindPFlag("syncInterval", rootCmd.PersistentFlags().Lookup("syncInterval"))
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -91,7 +94,6 @@ func initConfig() {
 		viper.SetConfigName(".bedel")
 	}
 
-	viper.SetDefault("syncInterval", 10)
 	viper.SetDefault("username", "default")
 	viper.AutomaticEnv()
 
@@ -100,12 +102,12 @@ func initConfig() {
 	}
 
 	if !viper.IsSet("address") {
-		fmt.Fprintln(os.Stderr, "address is required")
+		logger.Error("Address is required")
 		os.Exit(1)
 	}
 
 	if !viper.IsSet("password") {
-		fmt.Fprintln(os.Stderr, "password is required")
+		logger.Error("password is required")
 		os.Exit(1)
 	}
 

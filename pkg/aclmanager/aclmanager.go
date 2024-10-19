@@ -1,30 +1,23 @@
 package aclmanager
 
 import (
-	"bufio"
 	"context"
+	"crypto/sha256"
 	"fmt"
-	"github.com/redis/go-redis/v9"
-	"github.com/spf13/viper"
 	"log/slog"
-	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
+// Constants for node roles
 const (
 	Primary = iota
 	Follower
 	Unknown
-)
-
-var (
-	followerRegex    = regexp.MustCompile(`slave\d+:ip=(?P<ip>.+),port=(?P<port>\d+)`)
-	primaryHostRegex = regexp.MustCompile(`master_host:(?P<host>.+)`)
-	primaryPortRegex = regexp.MustCompile(`master_port:(?P<port>\d+)`)
-	role             = regexp.MustCompile(`role:master`)
-	filterUser       = regexp.MustCompile(`^user\s+`)
 )
 
 // AclManager contains the struct for managing the state of ACLs
@@ -35,7 +28,9 @@ type AclManager struct {
 	RedisClient *redis.Client
 	primary     atomic.Bool
 	nodes       map[string]int
+	mu          sync.Mutex // Mutex to protect nodes map
 	aclFile     bool
+	batchSize   int
 }
 
 // New creates a new AclManager
@@ -53,61 +48,79 @@ func New(addr string, username string, password string, aclfile bool) *AclManage
 		RedisClient: redisClient,
 		nodes:       make(map[string]int),
 		aclFile:     aclfile,
+		batchSize:   100,
 	}
 }
 
-// findNodes returns a list of nodes in the cluster based on the redis info replication command
+// SetBatchSize sets the batch size for syncing ACLs
+func (a *AclManager) SetBatchSize(size int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.batchSize = size
+}
+
+// findNodes returns a list of nodes in the cluster based on the redis ROLE command
 func (a *AclManager) findNodes(ctx context.Context) error {
 	slog.Debug("Entering findNodes")
 	defer slog.Debug("Exiting findNodes")
 
-	replicationInfo, err := a.RedisClient.Info(ctx, "replication").Result()
+	roleInfo, err := a.RedisClient.Do(ctx, "ROLE").Result()
 	if err != nil {
-		slog.Error("Failed to get replication info", "error", err)
-		return fmt.Errorf("findNodes: failed to get replication info: %w", err)
+		slog.Error("Failed to get role info", "error", err)
+		return fmt.Errorf("findNodes: failed to get role info: %w", err)
 	}
 
-	a.primary.Store(role.MatchString(replicationInfo))
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	// Clear the nodes map
+	a.nodes = make(map[string]int)
 
-	var masterHost, masterPort string
-	nodes := make([]string, 0)
-	scanner := bufio.NewScanner(strings.NewReader(replicationInfo))
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		slog.Debug("Parsing line for masterHost", "line", line)
-		if matches := primaryHostRegex.FindStringSubmatch(line); matches != nil {
-			masterHost = matches[1]
+	switch info := roleInfo.(type) {
+	case []interface{}:
+		if len(info) == 0 {
+			slog.Error("ROLE command returned empty result")
+			return fmt.Errorf("findNodes: ROLE command returned empty result")
 		}
 
-		slog.Debug("Parsing line for masterPort", "line", line)
-		if matches := primaryPortRegex.FindStringSubmatch(line); matches != nil {
-			masterPort = matches[1]
-			node := fmt.Sprintf("%s:%s", masterHost, masterPort)
-			nodes = append(nodes, node)
-			a.nodes[node] = Primary
+		roleType, ok := info[0].(string)
+		if !ok {
+			slog.Error("Unexpected type for role", "type", fmt.Sprintf("%T", info[0]))
+			return fmt.Errorf("findNodes: unexpected type for role: %T", info[0])
 		}
 
-		slog.Debug("Parsing line for follower", "line", line)
-		if matches := followerRegex.FindStringSubmatch(line); matches != nil {
-			ip := matches[followerRegex.SubexpIndex("ip")]
-			port := matches[followerRegex.SubexpIndex("port")]
-			node := fmt.Sprintf("%s:%s", ip, port)
-			nodes = append(nodes, node)
-			a.nodes[node] = Follower
+		switch roleType {
+		case "master":
+			a.primary.Store(true)
+			// Parse connected slaves
+			if len(info) >= 3 {
+				slaves, ok := info[2].([]interface{})
+				if ok {
+					for _, slaveInfo := range slaves {
+						if slaveArr, ok := slaveInfo.([]interface{}); ok && len(slaveArr) >= 2 {
+							ip, _ := slaveArr[0].(string)
+							port, _ := slaveArr[1].(int64)
+							node := fmt.Sprintf("%s:%d", ip, port)
+							a.nodes[node] = Follower
+						}
+					}
+				}
+			}
+		case "slave":
+			a.primary.Store(false)
+			// Get master info
+			if len(info) >= 3 {
+				masterHost, _ := info[1].(string)
+				masterPort, _ := info[2].(int64)
+				node := fmt.Sprintf("%s:%d", masterHost, masterPort)
+				a.nodes[node] = Primary
+			}
+		default:
+			slog.Error("Unknown role type", "role", roleType)
+			return fmt.Errorf("findNodes: unknown role type: %s", roleType)
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		slog.Error("Scanner error", "error", err)
-		return fmt.Errorf("findNodes: scanner error: %w", err)
-	}
-
-	for _, node := range nodes {
-		if _, ok := a.nodes[node]; !ok {
-			delete(a.nodes, node)
-			slog.Debug("Deleted node", "node", node)
-		}
+	default:
+		slog.Error("Unexpected type for roleInfo", "type", fmt.Sprintf("%T", roleInfo))
+		return fmt.Errorf("findNodes: unexpected type for roleInfo: %T", roleInfo)
 	}
 
 	return nil
@@ -131,6 +144,7 @@ func (a *AclManager) CurrentFunction(ctx context.Context) (int, error) {
 	return Follower, nil
 }
 
+// Primary returns an AclManager connected to the primary node
 func (a *AclManager) Primary(ctx context.Context) (*AclManager, error) {
 	slog.Debug("Entering Primary")
 	defer slog.Debug("Exiting Primary")
@@ -141,6 +155,8 @@ func (a *AclManager) Primary(ctx context.Context) (*AclManager, error) {
 		return nil, fmt.Errorf("Primary: %w", err)
 	}
 
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for address, function := range a.nodes {
 		if function == Primary {
 			slog.Info("Found Primary node", "address", address)
@@ -154,10 +170,13 @@ func (a *AclManager) Primary(ctx context.Context) (*AclManager, error) {
 // Close closes the redis client
 func (a *AclManager) Close() error {
 	slog.Debug("Closing Redis client")
+	if a.RedisClient == nil {
+		return fmt.Errorf("Redis client is nil")
+	}
 	return a.RedisClient.Close()
 }
 
-// listAcls returns a list of acls in the cluster based on the redis acl list command
+// listAcls returns a list of ACLs in the cluster based on the redis ACL LIST command
 func listAcls(ctx context.Context, client *redis.Client) ([]string, error) {
 	slog.Debug("Entering listAcls")
 	defer slog.Debug("Exiting listAcls")
@@ -170,31 +189,26 @@ func listAcls(ctx context.Context, client *redis.Client) ([]string, error) {
 
 	aclList, ok := result.([]interface{})
 	if !ok {
-		err := fmt.Errorf("unexpected result format: %v", result)
+		err := fmt.Errorf("unexpected result format: %T", result)
 		slog.Error("Unexpected result format", "result", result)
 		return nil, fmt.Errorf("listAcls: %w", err)
 	}
 
-	if len(aclList) == 0 {
-		slog.Info("No ACLs found")
-		return nil, nil // Return nil if no ACLs are found
-	}
-
-	acls := make([]string, len(aclList))
-	for i, acl := range aclList {
+	acls := make([]string, 0, len(aclList))
+	for _, acl := range aclList {
 		aclStr, ok := acl.(string)
 		if !ok {
-			err := fmt.Errorf("unexpected type for ACL: %v", acl)
+			err := fmt.Errorf("unexpected type for ACL: %T", acl)
 			slog.Error("Unexpected type for ACL", "acl", acl)
 			return nil, fmt.Errorf("listAcls: %w", err)
 		}
-		acls[i] = aclStr
+		acls = append(acls, aclStr)
 	}
 	slog.Info("Listed ACLs", "count", len(acls))
 	return acls, nil
 }
 
-// saveAclFile calls the redis command ACL SAVE to save the acls to the aclFile
+// saveAclFile calls the redis command ACL SAVE to save the ACLs to the aclFile
 func saveAclFile(ctx context.Context, client *redis.Client) error {
 	slog.Debug("Entering saveAclFile")
 	defer slog.Debug("Exiting saveAclFile")
@@ -207,7 +221,7 @@ func saveAclFile(ctx context.Context, client *redis.Client) error {
 	return nil
 }
 
-// loadAclFile calls the redis command ACL LOAD to load the acls from the aclFile
+// loadAclFile calls the redis command ACL LOAD to load the ACLs from the aclFile
 func loadAclFile(ctx context.Context, client *redis.Client) error {
 	slog.Debug("Entering loadAclFile")
 	defer slog.Debug("Exiting loadAclFile")
@@ -220,7 +234,56 @@ func loadAclFile(ctx context.Context, client *redis.Client) error {
 	return nil
 }
 
-// SyncAcls connects to master node and syncs the acls to the current node
+// hashString computes a SHA-256 hash of the input string
+func hashString(s string) string {
+	h := sha256.New()
+	h.Write([]byte(s))
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// listAndMapAcls is an auxiliary function to list ACLs and create a map of username to hash and ACL string
+func listAndMapAcls(ctx context.Context, client *redis.Client) (map[string]string, map[string]string, error) {
+	slog.Debug("Entering listAndMapAcls")
+	defer slog.Debug("Exiting listAndMapAcls")
+
+	result, err := client.Do(ctx, "ACL", "LIST").Result()
+	if err != nil {
+		slog.Error("Failed to list ACLs", "error", err)
+		return nil, nil, fmt.Errorf("listAndMapAcls: error listing ACLs: %w", err)
+	}
+
+	aclList, ok := result.([]interface{})
+	if !ok {
+		err := fmt.Errorf("unexpected result format: %T", result)
+		slog.Error("Unexpected result format", "result", result)
+		return nil, nil, fmt.Errorf("listAndMapAcls: %w", err)
+	}
+
+	aclHashMap := make(map[string]string)
+	aclStrMap := make(map[string]string)
+	for _, acl := range aclList {
+		aclStr, ok := acl.(string)
+		if !ok {
+			err := fmt.Errorf("unexpected type for ACL: %T", acl)
+			slog.Error("Unexpected type for ACL", "acl", acl)
+			return nil, nil, fmt.Errorf("listAndMapAcls: %w", err)
+		}
+		fields := strings.Fields(aclStr)
+		if len(fields) < 2 {
+			slog.Warn("Invalid ACL format", "acl", aclStr)
+			continue
+		}
+		username := fields[1]
+		hash := hashString(aclStr)
+		aclHashMap[username] = hash
+		aclStrMap[username] = aclStr
+	}
+
+	slog.Info("Listed and mapped ACLs", "count", len(aclHashMap))
+	return aclHashMap, aclStrMap, nil
+}
+
+// SyncAcls connects to the primary node and syncs the ACLs to the current node
 func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]string, []string, error) {
 	slog.Debug("Entering SyncAcls")
 	defer slog.Debug("Exiting SyncAcls")
@@ -231,103 +294,129 @@ func (a *AclManager) SyncAcls(ctx context.Context, primary *AclManager) ([]strin
 		return nil, nil, err
 	}
 
-	sourceAcls, err := listAcls(ctx, primary.RedisClient)
+	// Get source ACLs
+	sourceAclHashMap, sourceAclStrMap, err := listAndMapAcls(ctx, primary.RedisClient)
 	if err != nil {
-		slog.Error("Failed to list source ACLs", "error", err)
-		return nil, nil, fmt.Errorf("SyncAcls: error listing source acls: %w", err)
+		return nil, nil, fmt.Errorf("SyncAcls: error listing source ACLs: %w", err)
 	}
 
-	if a.aclFile {
-		if err = saveAclFile(ctx, primary.RedisClient); err != nil {
-			slog.Error("Failed to save primary ACLs to aclFile", "error", err)
-			return nil, nil, fmt.Errorf("SyncAcls: error saving primary acls to aclFile: %w", err)
-		}
-	}
-
-	destinationAcls, err := listAcls(ctx, a.RedisClient)
+	// Get destination ACLs
+	destinationAclHashMap, _, err := listAndMapAcls(ctx, a.RedisClient)
 	if err != nil {
-		slog.Error("Failed to list current ACLs", "error", err)
-		return nil, nil, fmt.Errorf("SyncAcls: error listing current acls: %w", err)
-	}
-
-	toUpdate := make(map[string]string, len(sourceAcls))
-	for _, acl := range sourceAcls {
-		username := strings.Fields(acl)[1]
-		toUpdate[username] = acl
+		return nil, nil, fmt.Errorf("SyncAcls: error listing destination ACLs: %w", err)
 	}
 
 	var updated, deleted []string
 
-	for _, acl := range destinationAcls {
-		username := strings.Fields(acl)[1]
-		if currentAcl, found := toUpdate[username]; found {
-			if currentAcl == acl {
-				delete(toUpdate, username)
-				slog.Debug("ACL already in sync", "username", username)
+	// Batch commands
+	cmds := make([]redis.Cmder, 0, a.batchSize)
+	pipe := a.RedisClient.Pipeline()
+
+	// Delete ACLs that are not in the source
+	for username := range destinationAclHashMap {
+		if _, found := sourceAclHashMap[username]; !found && username != "default" {
+			slog.Debug("Deleting ACL", "username", username)
+			cmd := pipe.Do(ctx, "ACL", "DELUSER", username)
+			cmds = append(cmds, cmd)
+			deleted = append(deleted, username)
+			if len(cmds) >= a.batchSize {
+				// Execute pipeline
+				if _, err = pipe.Exec(ctx); err != nil {
+					slog.Error("Failed to execute pipeline", "error", err)
+					return nil, nil, fmt.Errorf("SyncAcls: error executing pipeline: %w", err)
+				}
+				// Reset pipeline and cmds
+				pipe = a.RedisClient.Pipeline()
+				cmds = cmds[:0]
 			}
-			continue
 		}
-
-		slog.Debug("Deleting ACL", "username", username)
-		if err := a.RedisClient.Do(ctx, "ACL", "DELUSER", username).Err(); err != nil {
-			slog.Error("Failed to delete ACL", "username", username, "error", err)
-			return nil, nil, fmt.Errorf("SyncAcls: error deleting acl: %w", err)
-		}
-		deleted = append(deleted, username)
 	}
 
-	for username, acl := range toUpdate {
-		slog.Debug("Syncing ACL", "username", username, "line", acl)
-		command := strings.Split(filterUser.ReplaceAllString(acl, "ACL SETUSER "), " ")
-		commandInterface := make([]interface{}, len(command))
-		for i, s := range command {
-			commandInterface[i] = s
+	// Add or update ACLs from the source
+	for username, sourceHash := range sourceAclHashMap {
+		destHash, found := destinationAclHashMap[username]
+		if !found || destHash != sourceHash {
+			aclStr := sourceAclStrMap[username]
+			if aclStr == "" {
+				slog.Error("ACL string not found for user", "username", username)
+				continue
+			}
+
+			args := []interface{}{"ACL", "SETUSER"}
+			fields := strings.Fields(aclStr)
+			// Skip the "user" keyword
+			for _, field := range fields[1:] {
+				args = append(args, field)
+			}
+
+			cmd := pipe.Do(ctx, args...)
+			cmds = append(cmds, cmd)
+			updated = append(updated, username)
+
+			if len(cmds) >= a.batchSize {
+				// Execute pipeline
+				if _, err = pipe.Exec(ctx); err != nil {
+					slog.Error("Failed to execute pipeline", "error", err)
+					return nil, nil, fmt.Errorf("SyncAcls: error executing pipeline: %w", err)
+				}
+				// Reset pipeline and cmds
+				pipe = a.RedisClient.Pipeline()
+				cmds = cmds[:0]
+			}
 		}
-		if err := a.RedisClient.Do(ctx, commandInterface...).Err(); err != nil {
-			slog.Error("Failed to set ACL", "username", username, "error", err)
-			return nil, nil, fmt.Errorf("SyncAcls: error setting acl: %w", err)
-		}
-		updated = append(updated, username)
 	}
 
+	// Execute any remaining commands
+	if len(cmds) > 0 {
+		if _, err = pipe.Exec(ctx); err != nil {
+			slog.Error("Failed to execute pipeline", "error", err)
+			return nil, nil, fmt.Errorf("SyncAcls: error executing pipeline: %w", err)
+		}
+	}
+
+	// If aclFile is enabled, save and load the ACL file
 	if a.aclFile {
 		if err = saveAclFile(ctx, a.RedisClient); err != nil {
 			slog.Error("Failed to save ACLs to aclFile", "error", err)
-			return nil, nil, fmt.Errorf("SyncAcls: error saving acls to aclFile: %w", err)
+			return nil, nil, fmt.Errorf("SyncAcls: error saving ACLs to aclFile: %w", err)
 		}
 		if err = loadAclFile(ctx, a.RedisClient); err != nil {
 			slog.Error("Failed to load synced ACLs from aclFile", "error", err)
-			return nil, nil, fmt.Errorf("SyncAcls: error loading synced acls from aclFile: %w", err)
+			return nil, nil, fmt.Errorf("SyncAcls: error loading ACLs from aclFile: %w", err)
 		}
 	}
 
-	slog.Info("Synced ACLs", "added", updated, "deleted", deleted)
+	slog.Info("Synced ACLs", "updated", updated, "deleted", deleted)
 	return updated, deleted, nil
 }
 
-// Loop loops through the sync interval and syncs the acls
-func (a *AclManager) Loop(ctx context.Context) error {
+// Loop periodically syncs the ACLs at the given interval
+func (a *AclManager) Loop(ctx context.Context, syncInterval time.Duration) error {
 	slog.Debug("Entering Loop")
 	defer slog.Debug("Exiting Loop")
 
-	ticker := time.NewTicker(viper.GetDuration("syncInterval") * time.Second)
+	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Info("Context done, exiting Loop")
-			return nil
+			return ctx.Err()
 		case <-ticker.C:
 			function, err := a.CurrentFunction(ctx)
 			if err != nil {
-				slog.Warn("Unable to check if it's a Primary", "error", err)
+				slog.Warn("Unable to determine node function", "error", err)
 				continue
 			}
 			if function == Follower {
 				primary, err := a.Primary(ctx)
 				if err != nil {
 					slog.Warn("Unable to find Primary", "error", err)
+					continue
+				}
+				if primary == nil {
+					slog.Warn("Primary node is nil")
 					continue
 				}
 				added, deleted, err := a.SyncAcls(ctx, primary)

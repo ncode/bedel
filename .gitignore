@@ -18,5 +18,8 @@
 # vendor/
 .idea/
 
+# .DS_Store
+.DS_Store
+
 # ignore local buid
 bedel
