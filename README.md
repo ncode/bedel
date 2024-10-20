@@ -1,4 +1,5 @@
 # Bedel 
+![Logo](logo.png)
 
 [![Go](https://github.com/ncode/bedel/actions/workflows/go.yml/badge.svg)](https://github.com/ncode/bedel/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ncode/bedel)](https://goreportcard.com/report/github.com/ncode/bedel)
