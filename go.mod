@@ -3,8 +3,8 @@ module github.com/ncode/bedel
 go 1.21
 
 require (
-	github.com/go-redis/redismock/v9 v9.0.3
-	github.com/redis/go-redis/v9 v9.0.5
+	github.com/go-redis/redismock/v9 v9.2.0
+	github.com/redis/go-redis/v9 v9.2.0
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.3
